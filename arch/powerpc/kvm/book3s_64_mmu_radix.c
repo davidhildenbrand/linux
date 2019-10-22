@@ -801,12 +801,14 @@ int kvmppc_book3s_instantiate_page(struct kvm_vcpu *vcpu,
 					   writing, upgrade_p);
 		if (is_error_noslot_pfn(pfn))
 			return -EFAULT;
-		page = NULL;
-		if (pfn_valid(pfn)) {
-			page = pfn_to_page(pfn);
-			if (PageReserved(page))
-				page = NULL;
-		}
+		/*
+		 * We treat any pages that are not online (not managed by the
+		 * buddy) as reserved - this includes ZONE_DEVICE pages and
+		 * pages without a memmap (e.g., mapped via /dev/mem).
+		 */
+		page = pfn_to_online_page(pfn);
+		if (page && PageReserved(page))
+			page = NULL;
 	}
 
 	/*
