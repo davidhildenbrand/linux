@@ -3018,20 +3018,26 @@ static bool mmu_need_write_protect(struct kvm_vcpu *vcpu, gfn_t gfn,
 
 static bool kvm_is_mmio_pfn(kvm_pfn_t pfn)
 {
-	if (pfn_valid(pfn))
-		return !is_zero_pfn(pfn) && PageReserved(pfn_to_page(pfn)) &&
-			/*
-			 * Some reserved pages, such as those from NVDIMM
-			 * DAX devices, are not for MMIO, and can be mapped
-			 * with cached memory type for better performance.
-			 * However, the above check misconceives those pages
-			 * as MMIO, and results in KVM mapping them with UC
-			 * memory type, which would hurt the performance.
-			 * Therefore, we check the host memory type in addition
-			 * and only treat UC/UC-/WC pages as MMIO.
-			 */
-			(!pat_enabled() || pat_pfn_immune_to_uc_mtrr(pfn));
+	struct page *page = pfn_to_online_page(pfn);
 
+	/*
+	 * ZONE_DEVICE pages are never online. Online pages that are reserved
+	 * either indicate the zero page or MMIO pages.
+	 */
+	if (page)
+		return !is_zero_pfn(pfn) && PageReserved(pfn_to_page(pfn));
+
+	/*
+	 * Anything with a valid (but not online) memmap could be ZONE_DEVICE.
+	 * Treat only UC/UC-/WC pages as MMIO. devm_memremap_pages() established
+	 * the correct memtype for WB cacheable ZONE_DEVICE pages.
+	 */
+	if (pfn_valid(pfn))
+		return !pat_enabled() || pat_pfn_immune_to_uc_mtrr(pfn);
+
+	/*
+	 * Any RAM that has no memmap (e.g., mapped via /dev/mem) is not MMIO.
+	 */
 	return !e820__mapped_raw_any(pfn_to_hpa(pfn),
 				     pfn_to_hpa(pfn + 1) - 1,
 				     E820_TYPE_RAM);
