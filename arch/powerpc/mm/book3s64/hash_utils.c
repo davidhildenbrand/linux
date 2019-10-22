@@ -1103,12 +1103,14 @@ void hash__early_init_mmu_secondary(void)
  */
 unsigned int hash_page_do_lazy_icache(unsigned int pp, pte_t pte, int trap)
 {
-	struct page *page;
+	struct page *page = pfn_to_online_page(pte_pfn(pte));
 
-	if (!pfn_valid(pte_pfn(pte)))
+	/*
+	 * We ignore any pages that are not online (not managed by the buddy).
+	 * This includes ZONE_DEVICE pages.
+	 */
+	if (!page)
 		return pp;
-
-	page = pte_page(pte);
 
 	/* page is dirty */
 	if (!test_bit(PG_arch_1, &page->flags) && !PageReserved(page)) {
