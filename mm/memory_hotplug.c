@@ -509,9 +509,7 @@ static void __remove_section(unsigned long pfn, unsigned long nr_pages,
  * @altmap: alternative device page map or %NULL if default memmap is used
  *
  * Generic helper function to remove section mappings and sysfs entries
- * for the section of the memory we are removing. Caller needs to make
- * sure that pages are marked reserved and zones are adjust properly by
- * calling offline_pages().
+ * for the section of the memory we are removing.
  */
 void __remove_pages(unsigned long pfn, unsigned long nr_pages,
 		    struct vmem_altmap *altmap)
@@ -592,9 +590,9 @@ static int online_pages_range(unsigned long start_pfn, unsigned long nr_pages,
 	int order;
 
 	/*
-	 * Online the pages. The callback might decide to keep some pages
-	 * PG_reserved (to add them to the buddy later), but we still account
-	 * them as being online/belonging to this zone ("present").
+	 * Online the pages. The callback might decide to not free some pages
+	 * (to add them to the buddy later), but we still account them as
+	 * being online/belonging to this zone ("present").
 	 */
 	for (pfn = start_pfn; pfn < end_pfn; pfn += 1ul << order) {
 		order = min(MAX_ORDER - 1, get_order(PFN_PHYS(end_pfn - pfn)));
@@ -667,8 +665,7 @@ static void __meminit resize_pgdat_range(struct pglist_data *pgdat, unsigned lon
 }
 /*
  * Associate the pfn range with the given zone, initializing the memmaps
- * and resizing the pgdat/zone data to span the added pages. After this
- * call, all affected pages are PG_reserved.
+ * and resizing the pgdat/zone data to span the added pages.
  */
 void __ref move_pfn_range_to_zone(struct zone *zone, unsigned long start_pfn,
 		unsigned long nr_pages, struct vmem_altmap *altmap)
@@ -692,8 +689,8 @@ void __ref move_pfn_range_to_zone(struct zone *zone, unsigned long start_pfn,
 	/*
 	 * TODO now we have a visible range of pages which are not associated
 	 * with their zone properly. Not nice but set_pfnblock_flags_mask
-	 * expects the zone spans the pfn range. All the pages in the range
-	 * are reserved so nobody should be touching them so we should be safe
+	 * expects the zone spans the pfn range. The sections are not yet
+	 * marked online so nobody should be touching the memmap.
 	 */
 	memmap_init_zone(nr_pages, nid, zone_idx(zone), start_pfn,
 			MEMMAP_HOTPLUG, altmap);

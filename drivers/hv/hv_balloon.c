@@ -670,6 +670,12 @@ static struct notifier_block hv_memory_nb = {
 /* Check if the particular page is backed and can be onlined and online it. */
 static void hv_page_online_one(struct hv_hotadd_state *has, struct page *pg)
 {
+	/*
+	 * TODO: The core used to mark the pages reserved. Most probably
+	 * we can stop doing that now.
+	 */
+	__SetPageReserved(pg);
+
 	if (!has_pfn_is_backed(has, page_to_pfn(pg))) {
 		if (!PageOffline(pg))
 			__SetPageOffline(pg);

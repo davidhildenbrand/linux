@@ -374,6 +374,13 @@ static void xen_online_page(struct page *page, unsigned int order)
 	mutex_lock(&balloon_mutex);
 	for (i = 0; i < size; i++) {
 		p = pfn_to_page(start_pfn + i);
+		/*
+		 * TODO: The core used to mark the pages reserved. Most probably
+		 * we can stop doing that now. However, especially
+		 * alloc_xenballooned_pages() left PG_reserved set
+		 * on pages that can get mapped to user space.
+		 */
+		__SetPageReserved(p);
 		balloon_append(p);
 	}
 	mutex_unlock(&balloon_mutex);
