@@ -77,10 +77,17 @@ static unsigned int __ioremap_check_ram(struct resource *res)
 	start_pfn = (res->start + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	stop_pfn = (res->end + 1) >> PAGE_SHIFT;
 	if (stop_pfn > start_pfn) {
-		for (i = 0; i < (stop_pfn - start_pfn); ++i)
-			if (pfn_valid(start_pfn + i) &&
-			    !PageReserved(pfn_to_page(start_pfn + i)))
+		for (i = 0; i < (stop_pfn - start_pfn); ++i) {
+			struct page *page;
+			 /*
+			  * We treat any pages that are not online (not managed
+			  * by the buddy) as not being RAM. This includes
+			  * ZONE_DEVICE pages.
+			  */
+			page = pfn_to_online_page(start_pfn + i);
+			if (page && !PageReserved(page))
 				return IORES_MAP_SYSTEM_RAM;
+		}
 	}
 
 	return 0;
