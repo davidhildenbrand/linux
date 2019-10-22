@@ -55,10 +55,12 @@ static struct page *maybe_pte_to_page(pte_t pte)
 	unsigned long pfn = pte_pfn(pte);
 	struct page *page;
 
-	if (unlikely(!pfn_valid(pfn)))
-		return NULL;
-	page = pfn_to_page(pfn);
-	if (PageReserved(page))
+	/*
+	 * We reject any pages that are not online (not managed by the buddy).
+	 * This includes ZONE_DEVICE pages.
+	 */
+	page = pfn_to_online_page(pfn);
+	if (unlikely(!page || PageReserved(page)))
 		return NULL;
 	return page;
 }
