@@ -199,9 +199,9 @@ static inline void check_page_span(const void *ptr, unsigned long n,
 		return;
 
 	/*
-	 * Reject if range is entirely either Reserved (i.e. special or
-	 * device memory), or CMA. Otherwise, reject since the object spans
-	 * several independently allocated pages.
+	 * Accept if the range is entirely either Reserved ("special") or
+	 * CMA. Otherwise, reject since the object spans several independently
+	 * allocated pages.
 	 */
 	is_reserved = PageReserved(page);
 	is_cma = is_migrate_cma_page(page);
