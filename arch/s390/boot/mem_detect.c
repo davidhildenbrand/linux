@@ -116,6 +116,40 @@ static int diag260(void)
 	return 0;
 }
 
+static int diag500_get_device_memory_region_end(unsigned long *end)
+{
+	register unsigned long __nr asm("1") = 0x4;
+	register unsigned long __start asm("2");
+	register unsigned long __end asm("3") = 0;
+	unsigned long reg1, reg2;
+	psw_t old;
+
+	asm volatile(
+		"	mvc	0(16,%[psw_old]),0(%[psw_pgm])\n"
+		"	mvc	0(16,%[psw_old]),0(%[psw_pgm])\n"
+		"	epsw	%[reg1],%[reg2]\n"
+		"	st	%[reg1],0(%[psw_pgm])\n"
+		"	st	%[reg2],4(%[psw_pgm])\n"
+		"	larl	%[reg1],1f\n"
+		"	stg	%[reg1],8(%[psw_pgm])\n"
+		"	diag	2,4,0x500\n"
+		"1:	mvc	0(16,%[psw_pgm]),0(%[psw_old])\n"
+		: [reg1] "=&d" (reg1),
+		  [reg2] "=&a" (reg2),
+		  "=Q" (S390_lowcore.program_new_psw.addr),
+		  "=Q" (old),
+		  "=d" (__start),
+		  "+d" (__end)
+		: [psw_old] "a" (&old),
+		  [psw_pgm] "a" (&S390_lowcore.program_new_psw),
+		  "d" (__nr));
+	if (!__end)
+		return -EINVAL;
+	/* diag500 returns an inclusive end, convert to exclusive end. */
+	*end = __end + 1;
+	return 0;
+}
+
 static int tprot(unsigned long addr)
 {
 	unsigned long reg1, reg2;
@@ -163,9 +197,18 @@ static void search_mem_end(void)
 
 unsigned long detect_memory(void)
 {
-	unsigned long max_physmem_end;
+	unsigned long max_physmem_end, physmem_end, devmem_end;
 
 	sclp_early_get_memsize(&max_physmem_end);
+	physmem_end = max_physmem_end;
+
+	/*
+	 * Consider QEMU/KVM device memory region above SCLP-exposed RAM.
+	 * We might see this combined with SCLP storage elements or DIAG260, but
+	 * don't expect having to perform a binary search.
+	 */
+	if (!diag500_get_device_memory_region_end(&devmem_end))
+		max_physmem_end = devmem_end;
 
 	if (!sclp_early_read_storage_info()) {
 		mem_detect.info_source = MEM_DETECT_SCLP_STOR_INFO;
@@ -177,8 +220,8 @@ unsigned long detect_memory(void)
 		return max_physmem_end;
 	}
 
-	if (max_physmem_end) {
-		add_mem_detect_block(0, max_physmem_end);
+	if (physmem_end) {
+		add_mem_detect_block(0, physmem_end);
 		mem_detect.info_source = MEM_DETECT_SCLP_READ_INFO;
 		return max_physmem_end;
 	}
