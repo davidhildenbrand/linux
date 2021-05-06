@@ -5,6 +5,7 @@
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/pgtable_reclaim.h>
 #include <linux/fs.h>
 #include <linux/writeback.h>
 #include <linux/sysctl.h>
@@ -65,6 +66,8 @@ int drop_caches_sysctl_handler(struct ctl_table *table, int write,
 			drop_slab();
 			count_vm_event(DROP_SLAB);
 		}
+		if (sysctl_drop_caches & 4)
+			reclaim_pgtables();
 		if (!stfu) {
 			pr_info("%s (%d): drop_caches: %d\n",
 				current->comm, task_pid_nr(current),

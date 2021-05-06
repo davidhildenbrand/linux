@@ -299,4 +299,11 @@ struct uffdio_continue {
  */
 #define UFFD_USER_MODE_ONLY 1
 
+/*
+ * Create a userfaultfd that can handle reconstructable page table entries,
+ * such as the shared zeropage, getting zapped by page table reclaim code and
+ * consequently re-triggering userfaultfd faults.
+ */
+#define UFFD_REFAULT_SUPPORTED 2
+
 #endif /* _LINUX_USERFAULTFD_H */

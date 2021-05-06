@@ -889,4 +889,15 @@ config IO_MAPPING
 config SECRETMEM
 	def_bool ARCH_HAS_SET_DIRECT_MAP && !EMBEDDED
 
+config PAGE_TABLE_RECLAIM
+	bool "Allow for reclaiming unused process page tables"
+	depends on HAVE_FAST_GUP
+	default y
+	help
+	  Allow for reclaiming unused process page tables, for example, when
+	  under memory pressure or when explicitly triggered.
+
+	  One important use case that can generate a lot of unused page tables
+	  is discarding process memory, for example, using MADV_DISCARD.
+
 endmenu
