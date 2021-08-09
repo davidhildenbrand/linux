@@ -1036,13 +1036,15 @@ void __init setup_arch(char **cmdline_p)
 
 	jump_label_init();
 	parse_early_param();
-#ifdef CONFIG_CRASH_DUMP
-	/* Deactivate elfcorehdr= kernel parameter */
-	elfcorehdr_addr = ELFCORE_ADDR_MAX;
-#endif
 
 	os_info_init();
 	setup_ipl();
+
+#ifdef CONFIG_CRASH_DUMP
+	/* Deactivate elfcorehdr= kernel parameter */
+	setup_early_elfcorehdr(&elfcorehdr_addr);
+#endif
+
 	setup_task_size();
 	setup_control_program_code();
 

@@ -622,6 +622,19 @@ static size_t get_elfcorehdr_size(int mem_chunk_cnt)
 }
 
 /*
+ * Deactivate elfcorehdr= kernel parameter, but in an actual dump kernel
+ * make is_kdump_kernel() return "true" and is_vmcore_usable() return "false"
+ * until we actually allocated the elfcorehdr.
+ */
+void __init setup_early_elfcorehdr(unsigned long long *addr)
+{
+	if (OLDMEM_BASE || (is_ipl_type_dump() && sclp.hsa_size))
+		*addr = ELFCORE_ADDR_ERR;
+	else
+		*addr = ELFCORE_ADDR_MAX;
+}
+
+/*
  * Create ELF core header (new kernel)
  */
 int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
