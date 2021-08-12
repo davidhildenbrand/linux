@@ -68,9 +68,10 @@
  * explicitly triggered (VIRTIO_MEM_REQ_UNPLUG).
  *
  * There are no guarantees what will happen if unplugged memory is
- * read/written. Such memory should, in general, not be touched. E.g.,
- * even writing might succeed, but the values will simply be discarded at
- * random points in time.
+ * read/written. Often, unplugged memory inside the usable region can
+ * be read, however, some devices don't even support that. Such memory should,
+ * in general, not be touched. E.g., even writing might succeed, but the values
+ * will simply be discarded at random points in time.
  *
  * It can happen that the device cannot process a request, because it is
  * busy. The device driver has to retry later.
@@ -87,7 +88,8 @@
 
 /* node_id is an ACPI PXM and is valid */
 #define VIRTIO_MEM_F_ACPI_PXM		0
-
+/* The driver MUST NOT access unplugged memory. */
+#define VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE	1
 
 /* --- virtio-mem: guest -> host requests --- */
 
