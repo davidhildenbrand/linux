@@ -510,12 +510,12 @@ static int follow_fault_pfn(struct vm_area_struct *vma, struct mm_struct *mm,
 			    unsigned long vaddr, unsigned long *pfn,
 			    bool write_fault)
 {
+	struct locked_pte_ctx pte_ctx;
 	pte_t *ptep;
-	spinlock_t *ptl;
 	int ret;
 
-	ret = follow_pte(vma->vm_mm, vaddr, &ptep, &ptl);
-	if (ret) {
+	ptep = follow_pte(vma->vm_mm, vaddr, &pte_ctx);
+	if (!ptep) {
 		bool unlocked = false;
 
 		ret = fixup_user_fault(mm, vaddr,
@@ -528,9 +528,9 @@ static int follow_fault_pfn(struct vm_area_struct *vma, struct mm_struct *mm,
 		if (ret)
 			return ret;
 
-		ret = follow_pte(vma->vm_mm, vaddr, &ptep, &ptl);
-		if (ret)
-			return ret;
+		ptep = follow_pte(vma->vm_mm, vaddr, &pte_ctx);
+		if (!ptep)
+			return -EINVAL;
 	}
 
 	if (write_fault && !pte_write(*ptep))
@@ -538,7 +538,7 @@ static int follow_fault_pfn(struct vm_area_struct *vma, struct mm_struct *mm,
 	else
 		*pfn = pte_pfn(*ptep);
 
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return ret;
 }
 

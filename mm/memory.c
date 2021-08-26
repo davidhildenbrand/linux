@@ -4951,14 +4951,13 @@ out:
  * follow_pte - look up PTE at a user virtual address
  * @mm: the mm_struct of the target address space
  * @address: user virtual address
- * @ptepp: location to store found PTE
- * @ptlp: location to store the lock for the PTE
+ * @pte_ctx: location to store data to pass to put_locked_pte()
  *
- * On a successful return, the pointer to the PTE is stored in @ptepp;
- * the corresponding lock is taken and its location is stored in @ptlp.
- * The contents of the PTE are only stable until @ptlp is released;
- * any further use, if any, must be protected against invalidation
- * with MMU notifiers.
+ * On success, data to pass to put_locked_pte() is stored to @pte_ctx and a
+ * pointer to the locked PTE is returned. Use put_locked_pte() once done with
+ * the locked PTE; after put_locked_pte(), the PTE content and the PTE pointer
+ * are no longer valid. Any further use of the PTE content, if any, must
+ * be protected against invalidation with MMU notifiers.
  *
  * Only IO mappings and raw PFN mappings are allowed.  The mmap semaphore
  * should be taken for read.
@@ -4966,12 +4965,18 @@ out:
  * KVM uses this function.  While it is arguably less bad than ``follow_pfn``,
  * it is not a good general-purpose API.
  *
- * Return: zero on success, -ve otherwise.
+ * Return: pointer to the locked PTE on success, NULL if not found or if the
+ * PTE is not present.
  */
-int follow_pte(struct mm_struct *mm, unsigned long address,
-	       pte_t **ptepp, spinlock_t **ptlp)
+pte_t *follow_pte(struct mm_struct *mm, unsigned long address,
+		  struct locked_pte_ctx *pte_ctx)
 {
-	return follow_invalidate_pte(mm, address, NULL, ptepp, NULL, ptlp);
+	pte_t *ptep;
+
+	if (follow_invalidate_pte(mm, address, NULL, &ptep, NULL,
+				  &pte_ctx->ptl))
+		return NULL;
+	return ptep;
 }
 EXPORT_SYMBOL_GPL(follow_pte);
 
@@ -4991,18 +4996,18 @@ EXPORT_SYMBOL_GPL(follow_pte);
 int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	unsigned long *pfn)
 {
+	struct locked_pte_ctx pte_ctx;
 	int ret = -EINVAL;
-	spinlock_t *ptl;
 	pte_t *ptep;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		return ret;
 
-	ret = follow_pte(vma->vm_mm, address, &ptep, &ptl);
-	if (ret)
+	ptep = follow_pte(vma->vm_mm, address, &pte_ctx);
+	if (!ptep)
 		return ret;
 	*pfn = pte_pfn(*ptep);
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return 0;
 }
 EXPORT_SYMBOL(follow_pfn);
@@ -5012,26 +5017,27 @@ int follow_phys(struct vm_area_struct *vma,
 		unsigned long address, unsigned int flags,
 		unsigned long *prot, resource_size_t *phys)
 {
+	struct locked_pte_ctx pte_ctx;
 	int ret = -EINVAL;
 	pte_t *ptep, pte;
-	spinlock_t *ptl;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		goto out;
 
-	if (follow_pte(vma->vm_mm, address, &ptep, &ptl))
+	ptep = follow_pte(vma->vm_mm, address, &pte_ctx);
+	if (!ptep)
 		goto out;
 	pte = *ptep;
 
 	if ((flags & FOLL_WRITE) && !pte_write(pte))
-		goto unlock;
+		goto put_locked_pte;
 
 	*prot = pgprot_val(pte_pgprot(pte));
 	*phys = (resource_size_t)pte_pfn(pte) << PAGE_SHIFT;
 
 	ret = 0;
-unlock:
-	pte_unmap_unlock(ptep, ptl);
+put_locked_pte:
+	put_locked_pte(ptep, &pte_ctx);
 out:
 	return ret;
 }
@@ -5051,11 +5057,11 @@ out:
 int generic_access_phys(struct vm_area_struct *vma, unsigned long addr,
 			void *buf, int len, int write)
 {
+	struct locked_pte_ctx pte_ctx;
 	resource_size_t phys_addr;
 	unsigned long prot = 0;
 	void __iomem *maddr;
 	pte_t *ptep, pte;
-	spinlock_t *ptl;
 	int offset = offset_in_page(addr);
 	int ret = -EINVAL;
 
@@ -5063,10 +5069,11 @@ int generic_access_phys(struct vm_area_struct *vma, unsigned long addr,
 		return -EINVAL;
 
 retry:
-	if (follow_pte(vma->vm_mm, addr, &ptep, &ptl))
+	ptep = follow_pte(vma->vm_mm, addr, &pte_ctx);
+	if (!ptep)
 		return -EINVAL;
 	pte = *ptep;
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 
 	prot = pgprot_val(pte_pgprot(pte));
 	phys_addr = (resource_size_t)pte_pfn(pte) << PAGE_SHIFT;
@@ -5078,11 +5085,12 @@ retry:
 	if (!maddr)
 		return -ENOMEM;
 
-	if (follow_pte(vma->vm_mm, addr, &ptep, &ptl))
+	ptep = follow_pte(vma->vm_mm, addr, &pte_ctx);
+	if (!ptep)
 		goto out_unmap;
 
 	if (!pte_same(pte, *ptep)) {
-		pte_unmap_unlock(ptep, ptl);
+		put_locked_pte(ptep, &pte_ctx);
 		iounmap(maddr);
 
 		goto retry;
@@ -5093,7 +5101,7 @@ retry:
 	else
 		memcpy_fromio(buf, maddr + offset, len);
 	ret = len;
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 out_unmap:
 	iounmap(maddr);
 

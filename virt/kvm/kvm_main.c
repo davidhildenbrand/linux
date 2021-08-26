@@ -2201,13 +2201,13 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 			       bool write_fault, bool *writable,
 			       kvm_pfn_t *p_pfn)
 {
+	struct locked_pte_ctx pte_ctx;
 	kvm_pfn_t pfn;
 	pte_t *ptep;
-	spinlock_t *ptl;
 	int r;
 
-	r = follow_pte(vma->vm_mm, addr, &ptep, &ptl);
-	if (r) {
+	ptep = follow_pte(vma->vm_mm, addr, &pte_ctx);
+	if (!ptep) {
 		/*
 		 * get_user_pages fails for VM_IO and VM_PFNMAP vmas and does
 		 * not call the fault handler, so do it here.
@@ -2221,9 +2221,9 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 		if (r)
 			return r;
 
-		r = follow_pte(vma->vm_mm, addr, &ptep, &ptl);
-		if (r)
-			return r;
+		ptep = follow_pte(vma->vm_mm, addr, &pte_ctx);
+		if (!ptep)
+			return -EINVAL;
 	}
 
 	if (write_fault && !pte_write(*ptep)) {
@@ -2256,7 +2256,7 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma,
 		r = -EFAULT;
 
 out:
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	*p_pfn = pfn;
 
 	return r;

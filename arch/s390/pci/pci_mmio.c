@@ -117,12 +117,12 @@ static inline int __memcpy_toio_inuser(void __iomem *dst,
 SYSCALL_DEFINE3(s390_pci_mmio_write, unsigned long, mmio_addr,
 		const void __user *, user_buffer, size_t, length)
 {
+	struct locked_pte_ctx pte_ctx;
 	u8 local_buf[64];
 	void __iomem *io_addr;
 	void *buf;
 	struct vm_area_struct *vma;
 	pte_t *ptep;
-	spinlock_t *ptl;
 	long ret;
 
 	if (!zpci_is_enabled())
@@ -168,19 +168,20 @@ SYSCALL_DEFINE3(s390_pci_mmio_write, unsigned long, mmio_addr,
 	if (!(vma->vm_flags & VM_WRITE))
 		goto out_unlock_mmap;
 
-	ret = follow_pte(vma->vm_mm, mmio_addr, &ptep, &ptl);
-	if (ret)
+	ret = -EINVAL;
+	ptep = follow_pte(vma->vm_mm, mmio_addr, &pte_ctx);
+	if (!ptep)
 		goto out_unlock_mmap;
 
 	io_addr = (void __iomem *)((pte_pfn(*ptep) << PAGE_SHIFT) |
 			(mmio_addr & ~PAGE_MASK));
 
 	if ((unsigned long) io_addr < ZPCI_IOMAP_ADDR_BASE)
-		goto out_unlock_pt;
+		goto out_put_pte;
 
 	ret = zpci_memcpy_toio(io_addr, buf, length);
-out_unlock_pt:
-	pte_unmap_unlock(ptep, ptl);
+out_put_pte:
+	put_locked_pte(ptep, &pte_ctx);
 out_unlock_mmap:
 	mmap_read_unlock(current->mm);
 out_free:
@@ -259,12 +260,12 @@ static inline int __memcpy_fromio_inuser(void __user *dst,
 SYSCALL_DEFINE3(s390_pci_mmio_read, unsigned long, mmio_addr,
 		void __user *, user_buffer, size_t, length)
 {
+	struct locked_pte_ctx pte_ctx;
 	u8 local_buf[64];
 	void __iomem *io_addr;
 	void *buf;
 	struct vm_area_struct *vma;
 	pte_t *ptep;
-	spinlock_t *ptl;
 	long ret;
 
 	if (!zpci_is_enabled())
@@ -307,7 +308,8 @@ SYSCALL_DEFINE3(s390_pci_mmio_read, unsigned long, mmio_addr,
 	if (!(vma->vm_flags & VM_WRITE))
 		goto out_unlock_mmap;
 
-	ret = follow_pte(vma->vm_mm, mmio_addr, &ptep, &ptl);
+	ret = -EINVAL;
+	ptep = follow_pte(vma->vm_mm, mmio_addr, &pte_ctx);
 	if (ret)
 		goto out_unlock_mmap;
 
@@ -316,12 +318,12 @@ SYSCALL_DEFINE3(s390_pci_mmio_read, unsigned long, mmio_addr,
 
 	if ((unsigned long) io_addr < ZPCI_IOMAP_ADDR_BASE) {
 		ret = -EFAULT;
-		goto out_unlock_pt;
+		goto out_put_pte;
 	}
 	ret = zpci_memcpy_fromio(buf, io_addr, length);
 
-out_unlock_pt:
-	pte_unmap_unlock(ptep, ptl);
+out_put_pte:
+	put_locked_pte(ptep, &pte_ctx);
 out_unlock_mmap:
 	mmap_read_unlock(current->mm);
 

@@ -1747,8 +1747,6 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma);
 int follow_invalidate_pte(struct mm_struct *mm, unsigned long address,
 			  struct mmu_notifier_range *range, pte_t **ptepp,
 			  pmd_t **pmdpp, spinlock_t **ptlp);
-int follow_pte(struct mm_struct *mm, unsigned long address,
-	       pte_t **ptepp, spinlock_t **ptlp);
 int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	unsigned long *pfn);
 int follow_phys(struct vm_area_struct *vma, unsigned long address,
@@ -2300,6 +2298,9 @@ static inline void put_locked_pte(pte_t *pte, struct locked_pte_ctx *pte_ctx)
 {
 	pte_unmap_unlock(pte, pte_ctx->ptl);
 }
+
+pte_t *follow_pte(struct mm_struct *mm, unsigned long address,
+		  struct locked_pte_ctx *pte_ctx);
 
 #if USE_SPLIT_PMD_PTLOCKS
 
