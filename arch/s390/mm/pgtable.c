@@ -1020,9 +1020,9 @@ EXPORT_SYMBOL(get_guest_storage_key);
 int pgste_perform_essa(struct mm_struct *mm, unsigned long hva, int orc,
 			unsigned long *oldpte, unsigned long *oldpgste)
 {
+	struct locked_pte_ctx pte_ctx;
 	struct vm_area_struct *vma;
 	unsigned long pgstev;
-	spinlock_t *ptl;
 	pgste_t pgste;
 	pte_t *ptep;
 	int res = 0;
@@ -1034,7 +1034,7 @@ int pgste_perform_essa(struct mm_struct *mm, unsigned long hva, int orc,
 	vma = vma_lookup(mm, hva);
 	if (!vma || is_vm_hugetlb_page(vma))
 		return -EFAULT;
-	ptep = get_locked_pte(mm, hva, &ptl);
+	ptep = get_locked_pte(mm, hva, &pte_ctx);
 	if (unlikely(!ptep))
 		return -EFAULT;
 	pgste = pgste_get_lock(ptep);
@@ -1108,7 +1108,7 @@ int pgste_perform_essa(struct mm_struct *mm, unsigned long hva, int orc,
 
 	pgste_val(pgste) = pgstev;
 	pgste_set_unlock(ptep, pgste);
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return res;
 }
 EXPORT_SYMBOL(pgste_perform_essa);
@@ -1126,15 +1126,16 @@ EXPORT_SYMBOL(pgste_perform_essa);
 int set_pgste_bits(struct mm_struct *mm, unsigned long hva,
 			unsigned long bits, unsigned long value)
 {
+	struct locked_pte_ctx pte_ctx;
 	struct vm_area_struct *vma;
-	spinlock_t *ptl;
 	pgste_t new;
 	pte_t *ptep;
 
 	vma = vma_lookup(mm, hva);
 	if (!vma || is_vm_hugetlb_page(vma))
 		return -EFAULT;
-	ptep = get_locked_pte(mm, hva, &ptl);
+
+	ptep = get_locked_pte(mm, hva, &pte_ctx);
 	if (unlikely(!ptep))
 		return -EFAULT;
 	new = pgste_get_lock(ptep);
@@ -1143,7 +1144,7 @@ int set_pgste_bits(struct mm_struct *mm, unsigned long hva,
 	pgste_val(new) |= value & bits;
 
 	pgste_set_unlock(ptep, new);
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return 0;
 }
 EXPORT_SYMBOL(set_pgste_bits);
@@ -1158,18 +1159,18 @@ EXPORT_SYMBOL(set_pgste_bits);
  */
 int get_pgste(struct mm_struct *mm, unsigned long hva, unsigned long *pgstep)
 {
+	struct locked_pte_ctx pte_ctx;
 	struct vm_area_struct *vma;
-	spinlock_t *ptl;
 	pte_t *ptep;
 
 	vma = vma_lookup(mm, hva);
 	if (!vma || is_vm_hugetlb_page(vma))
 		return -EFAULT;
-	ptep = get_locked_pte(mm, hva, &ptl);
+	ptep = get_locked_pte(mm, hva, &pte_ctx);
 	if (unlikely(!ptep))
 		return -EFAULT;
 	*pgstep = pgste_val(pgste_get(ptep));
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return 0;
 }
 EXPORT_SYMBOL(get_pgste);

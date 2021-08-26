@@ -212,9 +212,9 @@ static int make_secure_pte(pte_t *ptep, unsigned long addr,
  */
 int gmap_make_secure(struct gmap *gmap, unsigned long gaddr, void *uvcb)
 {
+	struct locked_pte_ctx pte_ctx;
 	struct vm_area_struct *vma;
 	bool local_drain = false;
-	spinlock_t *ptelock;
 	unsigned long uaddr;
 	struct page *page;
 	pte_t *ptep;
@@ -246,9 +246,9 @@ again:
 		goto out;
 
 	lock_page(page);
-	ptep = get_locked_pte(gmap->mm, uaddr, &ptelock);
+	ptep = get_locked_pte(gmap->mm, uaddr, &pte_ctx);
 	rc = make_secure_pte(ptep, uaddr, page, uvcb);
-	pte_unmap_unlock(ptep, ptelock);
+	put_locked_pte(ptep, &pte_ctx);
 	unlock_page(page);
 out:
 	mmap_read_unlock(gmap->mm);

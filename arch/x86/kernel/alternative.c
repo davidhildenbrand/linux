@@ -777,10 +777,10 @@ static void *__text_poke(void *addr, const void *opcode, size_t len)
 {
 	bool cross_page_boundary = offset_in_page(addr) + len > PAGE_SIZE;
 	struct page *pages[2] = {NULL};
+	struct locked_pte_ctx pte_ctx;
 	temp_mm_state_t prev;
 	unsigned long flags;
 	pte_t pte, *ptep;
-	spinlock_t *ptl;
 	pgprot_t pgprot;
 
 	/*
@@ -814,7 +814,7 @@ static void *__text_poke(void *addr, const void *opcode, size_t len)
 	/*
 	 * The lock is not really needed, but this allows to avoid open-coding.
 	 */
-	ptep = get_locked_pte(poking_mm, poking_addr, &ptl);
+	ptep = get_locked_pte(poking_mm, poking_addr, &pte_ctx);
 
 	/*
 	 * This must not fail; preallocated in poking_init().
@@ -873,7 +873,7 @@ static void *__text_poke(void *addr, const void *opcode, size_t len)
 	BUG_ON(memcmp(addr, opcode, len));
 
 	local_irq_restore(flags);
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 	return addr;
 }
 

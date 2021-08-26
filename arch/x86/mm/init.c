@@ -777,7 +777,7 @@ void __init init_mem_mapping(void)
  */
 void __init poking_init(void)
 {
-	spinlock_t *ptl;
+	struct locked_pte_ctx pte_ctx;
 	pte_t *ptep;
 
 	poking_mm = copy_init_mm();
@@ -801,9 +801,9 @@ void __init poking_init(void)
 	 * needed for poking now. Later, poking may be performed in an atomic
 	 * section, which might cause allocation to fail.
 	 */
-	ptep = get_locked_pte(poking_mm, poking_addr, &ptl);
+	ptep = get_locked_pte(poking_mm, poking_addr, &pte_ctx);
 	BUG_ON(!ptep);
-	pte_unmap_unlock(ptep, ptl);
+	put_locked_pte(ptep, &pte_ctx);
 }
 
 /*

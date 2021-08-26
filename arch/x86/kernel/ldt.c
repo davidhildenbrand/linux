@@ -287,9 +287,9 @@ static void sanity_check_ldt_mapping(struct mm_struct *mm)
 static int
 map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 {
+	struct locked_pte_ctx pte_ctx;
 	unsigned long va;
 	bool is_vmalloc;
-	spinlock_t *ptl;
 	int i, nr_pages;
 
 	if (!boot_cpu_has(X86_FEATURE_PTI))
@@ -323,7 +323,7 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		 * get_locked_pte() will allocate all needed pagetables
 		 * and account for them in this mm.
 		 */
-		ptep = get_locked_pte(mm, va, &ptl);
+		ptep = get_locked_pte(mm, va, &pte_ctx);
 		if (!ptep)
 			return -ENOMEM;
 		/*
@@ -336,7 +336,7 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		pgprot_val(pte_prot) &= __supported_pte_mask;
 		pte = pfn_pte(pfn, pte_prot);
 		set_pte_at(mm, va, ptep, pte);
-		pte_unmap_unlock(ptep, ptl);
+		put_locked_pte(ptep, &pte_ctx);
 	}
 
 	/* Propagate LDT mapping to the user page-table */
@@ -362,13 +362,13 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 
 	for (i = 0; i < nr_pages; i++) {
 		unsigned long offset = i << PAGE_SHIFT;
-		spinlock_t *ptl;
+		struct locked_pte_ctx pte_ctx;
 		pte_t *ptep;
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-		ptep = get_locked_pte(mm, va, &ptl);
+		ptep = get_locked_pte(mm, va, &pte_ctx);
 		pte_clear(mm, va, ptep);
-		pte_unmap_unlock(ptep, ptl);
+		put_locked_pte(ptep, &pte_ctx);
 	}
 
 	va = (unsigned long)ldt_slot_va(ldt->slot);

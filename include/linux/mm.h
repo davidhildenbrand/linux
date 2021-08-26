@@ -2042,16 +2042,6 @@ static inline int pte_devmap(pte_t pte)
 
 int vma_wants_writenotify(struct vm_area_struct *vma, pgprot_t vm_page_prot);
 
-extern pte_t *__get_locked_pte(struct mm_struct *mm, unsigned long addr,
-			       spinlock_t **ptl);
-static inline pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
-				    spinlock_t **ptl)
-{
-	pte_t *ptep;
-	__cond_lock(*ptl, ptep = __get_locked_pte(mm, addr, ptl));
-	return ptep;
-}
-
 #ifdef __PAGETABLE_P4D_FOLDED
 static inline int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 						unsigned long address)
@@ -2287,6 +2277,29 @@ static inline void pgtable_pte_page_dtor(struct page *page)
 #define pte_alloc_kernel(pmd, address)			\
 	((unlikely(pmd_none(*(pmd))) && __pte_alloc_kernel(pmd))? \
 		NULL: pte_offset_kernel(pmd, address))
+
+struct locked_pte_ctx {
+	spinlock_t *ptl;
+};
+
+/*
+ * get_locked_pte() has to be used with care: it must not be used if THP or
+ * huge pages are possible. Use put_locked_pte() to properly unlock and cleanup.
+ */
+extern pte_t *__get_locked_pte(struct mm_struct *mm, unsigned long addr,
+			       struct locked_pte_ctx *pte_ctx);
+static inline pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
+				    struct locked_pte_ctx *pte_ctx)
+{
+	pte_t *ptep;
+	__cond_lock(pte_ctx->ptl, ptep = __get_locked_pte(mm, addr, pte_ctx));
+	return ptep;
+}
+
+static inline void put_locked_pte(pte_t *pte, struct locked_pte_ctx *pte_ctx)
+{
+	pte_unmap_unlock(pte, pte_ctx->ptl);
+}
 
 #if USE_SPLIT_PMD_PTLOCKS
 

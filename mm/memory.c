@@ -1727,13 +1727,13 @@ static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr)
 }
 
 pte_t *__get_locked_pte(struct mm_struct *mm, unsigned long addr,
-			spinlock_t **ptl)
+			struct locked_pte_ctx *pte_ctx)
 {
 	pmd_t *pmd = walk_to_pmd(mm, addr);
 
 	if (!pmd)
 		return NULL;
-	return pte_alloc_map_lock(mm, pmd, addr, ptl);
+	return pte_alloc_map_lock(mm, pmd, addr, &pte_ctx->ptl);
 }
 
 static int validate_page_before_insert(struct page *page)
@@ -1768,19 +1768,19 @@ static int insert_page(struct vm_area_struct *vma, unsigned long addr,
 			struct page *page, pgprot_t prot)
 {
 	struct mm_struct *mm = vma->vm_mm;
+	struct locked_pte_ctx pte_ctx;
 	int retval;
 	pte_t *pte;
-	spinlock_t *ptl;
 
 	retval = validate_page_before_insert(page);
 	if (retval)
 		goto out;
 	retval = -ENOMEM;
-	pte = get_locked_pte(mm, addr, &ptl);
+	pte = get_locked_pte(mm, addr, &pte_ctx);
 	if (!pte)
 		goto out;
 	retval = insert_page_into_pte_locked(mm, pte, addr, page, prot);
-	pte_unmap_unlock(pte, ptl);
+	put_locked_pte(pte, &pte_ctx);
 out:
 	return retval;
 }
@@ -2032,10 +2032,10 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 			pfn_t pfn, pgprot_t prot, bool mkwrite)
 {
 	struct mm_struct *mm = vma->vm_mm;
+	struct locked_pte_ctx pte_ctx;
 	pte_t *pte, entry;
-	spinlock_t *ptl;
 
-	pte = get_locked_pte(mm, addr, &ptl);
+	pte = get_locked_pte(mm, addr, &pte_ctx);
 	if (!pte)
 		return VM_FAULT_OOM;
 	if (!pte_none(*pte)) {
@@ -2077,7 +2077,7 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 	update_mmu_cache(vma, addr, pte); /* XXX: why not for insert_page? */
 
 out_unlock:
-	pte_unmap_unlock(pte, ptl);
+	put_locked_pte(pte, &pte_ctx);
 	return VM_FAULT_NOPAGE;
 }
 

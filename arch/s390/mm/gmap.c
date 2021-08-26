@@ -684,9 +684,9 @@ static const struct mm_walk_ops zap_unused_walk_ops = {
  */
 void __gmap_zap(struct gmap *gmap, unsigned long gaddr)
 {
+	struct locked_pte_ctx pte_ctx;
 	struct vm_area_struct *vma;
 	unsigned long vmaddr;
-	spinlock_t *ptl;
 	pte_t *ptep;
 
 	/* Find the vm address for the guest address */
