@@ -4997,15 +4997,14 @@ int follow_pfn(struct vm_area_struct *vma, unsigned long address,
 	unsigned long *pfn)
 {
 	struct locked_pte_ctx pte_ctx;
-	int ret = -EINVAL;
 	pte_t *ptep;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
-		return ret;
+		return -EINVAL;
 
 	ptep = follow_pte(vma->vm_mm, address, &pte_ctx);
 	if (!ptep)
-		return ret;
+		return -EINVAL;
 	*pfn = pte_pfn(*ptep);
 	put_locked_pte(ptep, &pte_ctx);
 	return 0;
@@ -5022,11 +5021,11 @@ int follow_phys(struct vm_area_struct *vma,
 	pte_t *ptep, pte;
 
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
-		goto out;
+		return ret;
 
 	ptep = follow_pte(vma->vm_mm, address, &pte_ctx);
 	if (!ptep)
-		goto out;
+		return ret;
 	pte = *ptep;
 
 	if ((flags & FOLL_WRITE) && !pte_write(pte))
@@ -5038,7 +5037,6 @@ int follow_phys(struct vm_area_struct *vma,
 	ret = 0;
 put_locked_pte:
 	put_locked_pte(ptep, &pte_ctx);
-out:
 	return ret;
 }
 
