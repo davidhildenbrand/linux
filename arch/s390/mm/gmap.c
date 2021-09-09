@@ -668,6 +668,17 @@ out_up:
 }
 EXPORT_SYMBOL_GPL(gmap_fault);
 
+static int __s390_zap_unused_pte(pte_t *pte, unsigned long addr,
+				 unsigned long next, struct mm_walk *walk)
+{
+	ptep_zap_unused(walk->mm, addr, pte, 0);
+	return 0;
+}
+
+static const struct mm_walk_ops zap_unused_walk_ops = {
+	.pte_entry = __s390_zap_unused_pte,
+};
+
 /*
  * this function is assumed to be called with mmap_lock held
  */
@@ -683,17 +694,10 @@ void __gmap_zap(struct gmap *gmap, unsigned long gaddr)
 						   gaddr >> PMD_SHIFT);
 	if (vmaddr) {
 		vmaddr |= gaddr & ~PMD_MASK;
+		vmaddr &= PAGE_MASK;
 
-		vma = vma_lookup(gmap->mm, vmaddr);
-		if (!vma || is_vm_hugetlb_page(vma))
-			return;
-
-		/* Get pointer to the page table entry */
-		ptep = get_locked_pte(gmap->mm, vmaddr, &ptl);
-		if (likely(ptep)) {
-			ptep_zap_unused(gmap->mm, vmaddr, ptep, 0);
-			pte_unmap_unlock(ptep, ptl);
-		}
+		walk_page_range(gmap->mm, vmaddr, vmaddr + PAGE_SIZE,
+				&zap_unused_walk_ops, NULL);
 	}
 }
 EXPORT_SYMBOL_GPL(__gmap_zap);
