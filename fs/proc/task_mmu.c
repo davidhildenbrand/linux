@@ -1086,22 +1086,6 @@ struct clear_refs_private {
 
 #ifdef CONFIG_MEM_SOFT_DIRTY
 
-static inline bool pte_is_pinned(struct vm_area_struct *vma, unsigned long addr, pte_t pte)
-{
-	struct page *page;
-
-	if (!pte_write(pte))
-		return false;
-	if (!is_cow_mapping(vma->vm_flags))
-		return false;
-	if (likely(!test_bit(MMF_HAS_PINNED, &vma->vm_mm->flags)))
-		return false;
-	page = vm_normal_page(vma, addr, pte);
-	if (!page)
-		return false;
-	return page_maybe_dma_pinned(page);
-}
-
 static inline void clear_soft_dirty(struct vm_area_struct *vma,
 		unsigned long addr, pte_t *pte)
 {
@@ -1116,8 +1100,6 @@ static inline void clear_soft_dirty(struct vm_area_struct *vma,
 	if (pte_present(ptent)) {
 		pte_t old_pte;
 
-		if (pte_is_pinned(vma, addr, ptent))
-			return;
 		old_pte = ptep_modify_prot_start(vma, addr, pte);
 		ptent = pte_wrprotect(old_pte);
 		ptent = pte_clear_soft_dirty(ptent);
