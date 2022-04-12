@@ -1620,6 +1620,17 @@ static inline bool folio_maybe_dma_pinned(struct folio *folio)
 		return atomic_read(folio_pincount_ptr(folio)) > 0;
 
 	/*
+	 * We only allow pinning anonymous pages (see gup_must_unshare())
+	 * while they have the exclusive marker set and don't allow clearing the
+	 * exclusive marker while they maybe pinned (see
+	 * page_try_share_anon_rmap() and page_try_dup_anon_rmap()).
+	 * Consequently, pages with the exclusive marker cleared cannot be
+	 * pinned and we can optimize for that case here.
+	 */
+	if (folio_test_anon(folio) && !PageAnonExclusive(&folio->page))
+		return false;
+
+	/*
 	 * folio_ref_count() is signed. If that refcount overflows, then
 	 * folio_ref_count() returns a negative value, and callers will avoid
 	 * further incrementing the refcount.
