@@ -1044,6 +1044,20 @@ config GUP_TEST
 comment "GUP_TEST needs to have DEBUG_FS enabled"
 	depends on !GUP_TEST && !DEBUG_FS
 
+config CONFIG_GUP_SANITY_CHECKS_DEFAULT_ENABLED
+	bool "Enable additional sanity checks for get_user_pages() as default"
+	help
+	  Enables additional runtime sanity checks for get_user_pages() as
+	  default. The additional sanity checks can slightly degrade
+	  GUP performance, while detecting some unexpected situations, such
+	  as unpinning a page that really shouldn't have been pinned.
+
+	  When set, the checks can be disable during boot using
+	  "gup.sanity_checks=0" on the kernel commandline.
+
+	  When not set, the checks can be enabled during boot using
+	  "gup.sanity_checks=1" on the kernel commandline.
+
 config GUP_GET_PTE_LOW_HIGH
 	bool
 

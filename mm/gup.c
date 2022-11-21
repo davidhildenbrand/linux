@@ -24,6 +24,31 @@
 
 #include "internal.h"
 
+static DEFINE_STATIC_KEY_MAYBE(CONFIG_GUP_SANITY_CHECKS_DEFAULT_ENABLED,
+			       sanity_checks_key);
+static bool sanity_checks_param = IS_ENABLED(CONFIG_GUP_SANITY_CHECKS_DEFAULT_ENABLED);
+
+static __meminit int sanity_checks_set(const char *val,
+				       const struct kernel_param *kp)
+{
+	if (param_set_bool(val, kp))
+		return -EINVAL;
+	if (*(bool *)kp->arg)
+		static_branch_enable(&sanity_checks_key);
+	else
+		static_branch_disable(&sanity_checks_key);
+	return 0;
+}
+
+static const struct kernel_param_ops sanity_checks_ops = {
+	.set = sanity_checks_set,
+	.get = param_get_bool,
+};
+
+module_param_cb(sanity_checks, &sanity_checks_ops,
+		&sanity_checks_param, 0400);
+MODULE_PARM_DESC(sanity_checks, "Enable/disable advanced GUP sanity checks");
+
 struct follow_page_context {
 	unsigned int page_mask;
 };
@@ -31,7 +56,7 @@ struct follow_page_context {
 static inline void sanity_check_pinned_pages(struct page **pages,
 					     unsigned long npages)
 {
-	if (!IS_ENABLED(CONFIG_DEBUG_VM))
+	if (static_branch_unlikely(sanity_checks_key))
 		return;
 
 	/*
@@ -50,14 +75,16 @@ static inline void sanity_check_pinned_pages(struct page **pages,
 		struct page *page = *pages;
 		struct folio *folio = page_folio(page);
 
+		WARN_ON_ONCE(!folio_maybe_dma_pinned(folio));
+
 		if (!folio_test_anon(folio))
 			continue;
 		if (!folio_test_large(folio) || folio_test_hugetlb(folio))
-			VM_BUG_ON_PAGE(!PageAnonExclusive(&folio->page), page);
+			WARN_ON_ONCE(!PageAnonExclusive(&folio->page));
 		else
 			/* Either a PTE-mapped or a PMD-mapped THP. */
-			VM_BUG_ON_PAGE(!PageAnonExclusive(&folio->page) &&
-				       !PageAnonExclusive(page), page);
+			WARN_ON_ONCE(!PageAnonExclusive(&folio->page) &&
+				     !PageAnonExclusive(page));
 	}
 }
 
