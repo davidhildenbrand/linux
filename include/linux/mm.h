@@ -1223,16 +1223,15 @@ static inline int page_mapcount(struct page *page)
 	return mapcount;
 }
 
-int folio_total_mapcount(struct folio *folio);
+static inline int folio_total_mapcount(struct folio *folio)
+{
+	VM_WARN_ON_FOLIO(!folio_test_large(folio), folio);
+	return atomic_read(&folio->_total_mapcount) + 1;
+}
 
 /**
- * folio_mapcount() - Calculate the number of mappings of this folio.
+ * folio_mapcount() - Number of mappings of this folio.
  * @folio: The folio.
- *
- * A large folio tracks both how many times the entire folio is mapped,
- * and how many times each individual page in the folio is mapped.
- * This function calculates the total number of times the folio is
- * mapped.
  *
  * Return: The number of times this folio is mapped.
  */
@@ -1243,15 +1242,6 @@ static inline int folio_mapcount(struct folio *folio)
 	return folio_total_mapcount(folio);
 }
 
-static inline bool folio_large_is_mapped(struct folio *folio)
-{
-	/*
-	 * Reading _entire_mapcount below could be omitted if hugetlb
-	 * participated in incrementing nr_pages_mapped when compound mapped.
-	 */
-	return atomic_read(&folio->_nr_pages_mapped) > 0 ||
-		atomic_read(&folio->_entire_mapcount) >= 0;
-}
 
 /**
  * folio_mapped - Is this folio mapped into userspace?
@@ -1261,9 +1251,7 @@ static inline bool folio_large_is_mapped(struct folio *folio)
  */
 static inline bool folio_mapped(struct folio *folio)
 {
-	if (likely(!folio_test_large(folio)))
-		return atomic_read(&folio->_mapcount) >= 0;
-	return folio_large_is_mapped(folio);
+	return folio_mapcount(folio) != 0;
 }
 
 /*
@@ -1273,9 +1261,7 @@ static inline bool folio_mapped(struct folio *folio)
  */
 static inline bool page_mapped(struct page *page)
 {
-	if (likely(!PageCompound(page)))
-		return atomic_read(&page->_mapcount) >= 0;
-	return folio_large_is_mapped(page_folio(page));
+	return folio_mapped(page_folio(page));
 }
 
 static inline struct page *virt_to_head_page(const void *x)
