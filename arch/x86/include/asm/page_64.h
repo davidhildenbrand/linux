@@ -42,6 +42,23 @@ extern unsigned long __phys_addr_symbol(unsigned long);
 
 void memzero_page_aligned_unrolled(void *addr, u64 len);
 
+static inline void clear_pages(void *addr, unsigned int npages)
+{
+	u64 len = npages * PAGE_SIZE;
+	/*
+	 * Clean up KMSAN metadata for the pages being cleared. The assembly call
+	 * below clobbers @addr, so we perform unpoisoning before it.
+	 */
+	kmsan_unpoison_memory(addr, len);
+	asm volatile(ALTERNATIVE_2("call memzero_page_aligned_unrolled",
+				   "shrq $3, %%rcx; rep stosq", X86_FEATURE_REP_GOOD,
+				   "rep stosb", X86_FEATURE_ERMS)
+			: "+c" (len), "+D" (addr), ASM_CALL_CONSTRAINT
+			: "a" (0)
+			: "cc", "memory");
+}
+#define __HAVE_ARCH_CLEAR_PAGES
+
 /**
  * clear_page() - clear a page using a kernel virtual address.
  * @page: address of kernel page
@@ -67,18 +84,7 @@ void memzero_page_aligned_unrolled(void *addr, u64 len);
  */
 static inline void clear_page(void *page)
 {
-	u64 len = PAGE_SIZE;
-	/*
-	 * Clean up KMSAN metadata for the page being cleared. The assembly call
-	 * below clobbers @page, so we perform unpoisoning before it.
-	 */
-	kmsan_unpoison_memory(page, len);
-	asm volatile(ALTERNATIVE_2("call memzero_page_aligned_unrolled",
-				   "shrq $3, %%rcx; rep stosq", X86_FEATURE_REP_GOOD,
-				   "rep stosb", X86_FEATURE_ERMS)
-			: "+c" (len), "+D" (page), ASM_CALL_CONSTRAINT
-			: "a" (0)
-			: "cc", "memory");
+	clear_pages(page, 1);
 }
 
 void copy_page(void *to, void *from);
