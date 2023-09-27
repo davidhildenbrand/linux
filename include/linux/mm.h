@@ -2167,8 +2167,28 @@ static inline size_t folio_size(struct folio *folio)
  */
 static inline bool folio_mapped_shared(struct folio *folio)
 {
+	unsigned int total_mapcount;
+
+	if (likely(!folio_test_large(folio)))
+		return atomic_read(&folio->page._mapcount) != 0;
+	total_mapcount = folio_total_mapcount(folio);
+
+	/* A single mapping implies "mapped exclusively". */
+	if (total_mapcount == 1)
+		return false;
+
+	/* If there is an entire mapping, it must be the only mapping. */
+	if (folio_entire_mapcount(folio) || unlikely(folio_test_hugetlb(folio)))
+		return true;
+	/*
+	 * Partially-mappable folios are tricky ... but some are "obviously
+	 * mapped shared": if we have more (PTE) mappings than we have pages
+	 * in the folio, certainly some part is mapped more than once.
+	 */
+	if (total_mapcount > folio_nr_pages(folio))
+		return true;
 	/* ... guess based on the mapcount of the first page of the folio. */
-	return page_mapcount(folio_page(folio, 0)) > 1;
+	return atomic_read(&folio->page._mapcount) > 0;
 }
 
 #ifndef HAVE_ARCH_MAKE_PAGE_ACCESSIBLE
