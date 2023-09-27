@@ -2140,21 +2140,49 @@ static inline size_t folio_size(struct folio *folio)
 }
 
 /**
- * folio_estimated_sharers - Estimate the number of sharers of a folio.
+ * folio_mapped_shared - Report if a folio is certainly mapped by
+ *			 multiple entities in their page tables
  * @folio: The folio.
  *
- * folio_estimated_sharers() aims to serve as a function to efficiently
- * estimate the number of processes sharing a folio. This is done by
- * looking at the precise mapcount of the first subpage in the folio, and
- * assuming the other subpages are the same. This may not be true for large
- * folios. If you want exact mapcounts for exact calculations, look at
- * page_mapcount() or folio_total_mapcount().
+ * This function checks if a folio is certainly *currently* mapped by
+ * multiple entities in their page table ("mapped shared") or if the folio
+ * may be mapped exclusively by a single entity ("mapped exclusively").
  *
- * Return: The estimated number of processes sharing a folio.
+ * Usually, we consider a single entity to be a single MM. However, some
+ * folios (KSM, pagecache) can be mapped multiple times into the same MM.
+ *
+ * For KSM folios, each individual page table mapping is considered a
+ * separate entity. So if a KSM folio is mapped multiple times into the
+ * same process, it is considered "mapped shared".
+ *
+ * For pagecache folios that are entirely mapped multiple times into the
+ * same MM (i.e., multiple VMAs in the same MM cover the same
+ * file range), we traditionally (and for simplicity) consider them,
+ * "mapped shared". For partially-mapped folios (e..g, PTE-mapped THP), we
+ * might detect them either as "mapped shared" or "mapped exclusively" --
+ * whatever is simpler.
+ *
+ * For small folios and entirely mapped large folios (e.g., hugetlb,
+ * PMD-mapped PMD-sized THP), the result will be exactly correct.
+ *
+ * For all other (partially-mappable) folios, such as PTE-mapped THP, the
+ * return value is partially fuzzy: true is not fuzzy, because it means
+ * "certainly mapped shared", but false means "maybe mapped exclusively".
+ *
+ * Note that this function only considers *current* page table mappings
+ * tracked via rmap -- that properly adjusts the folio mapcount(s) -- and
+ * does not consider:
+ * (1) if the folio might get mapped in the (near) future (e.g., swapcache,
+ *     pagecache, temporary unmapping for migration).
+ * (2) if the folio is mapped without involving the rmap (PFN mappings).
+ * (3) hugetlb page table sharing
+ *
+ * Return: Whether the folio is certainly mapped by multiple entities.
  */
-static inline int folio_estimated_sharers(struct folio *folio)
+static inline bool folio_mapped_shared(struct folio *folio)
 {
-	return page_mapcount(folio_page(folio, 0));
+	/* ... guess based on the mapcount of the first page of the folio. */
+	return page_mapcount(folio_page(folio, 0)) > 1;
 }
 
 #ifndef HAVE_ARCH_MAKE_PAGE_ACCESSIBLE
