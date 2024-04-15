@@ -537,12 +537,6 @@ int arch_make_folio_accessible(struct folio *folio)
 	return rc;
 }
 EXPORT_SYMBOL_GPL(arch_make_folio_accessible);
-
-int arch_make_page_accessible(struct page *page)
-{
-	return arch_make_folio_accessible(page_folio(page));
-}
-EXPORT_SYMBOL_GPL(arch_make_page_accessible);
 #endif
 
 #if defined(CONFIG_PROTECTED_VIRTUALIZATION_GUEST) || IS_ENABLED(CONFIG_KVM)
