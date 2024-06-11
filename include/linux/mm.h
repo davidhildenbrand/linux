@@ -2144,7 +2144,9 @@ static inline size_t folio_size(struct folio *folio)
  *
  * This function checks if the folio is currently mapped into more than one
  * MM ("mapped shared"), or if the folio is only mapped into a single MM
- * ("mapped exclusively").
+ * ("mapped exclusively"). For (small) KSM folios, this function also indicates
+ * if the folio is mapped multiple times into the same MM (COW shared mappings
+ * are completely independent).
  *
  * As precise information is not easily available for all folios, this function
  * estimates the number of MMs ("sharers") that are currently mapping a folio
@@ -2162,9 +2164,6 @@ static inline size_t folio_size(struct folio *folio)
  *    #. For pagecache folios (including hugetlb), the return value can wrongly
  *       indicate "mapped shared" (false positive) when two VMAs in the same MM
  *       cover the same file range.
- *    #. For (small) KSM folios, the return value can wrongly indicate "mapped
- *       shared" (false positive), when the folio is mapped multiple times into
- *       the same MM.
  *
  * Further, this function only considers current page table mappings that
  * are tracked using the folio mapcount(s).
