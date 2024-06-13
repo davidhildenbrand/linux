@@ -270,6 +270,12 @@ typedef struct {
 	unsigned long val;
 } swp_entry_t;
 
+enum rmap_state {
+	RMAP_STATE_EXCLUSIVE = 0,
+	RMAP_STATE_SHARED,
+	RMAP_STATE_MAYBE_SHARED,
+};
+
 /**
  * struct folio - Represents a contiguous set of bytes.
  * @flags: Identical to the page flags.
@@ -298,6 +304,12 @@ typedef struct {
  * @_hugetlb_cgroup_rsvd: Do not use directly, use accessor in hugetlb_cgroup.h.
  * @_hugetlb_hwpoison: Do not use directly, call raw_hwp_list_head().
  * @_deferred_list: Folios to be split under memory pressure.
+ * @_rmap_state: Do not use outside of rmap code.
+ * @_rmap_sum0: Do not use outside of rmap code.
+ * @_rmap_sum1: Do not use outside of rmap code. folio_order() >= 3 only.
+ * @_rmap_sum2: Do not use outside of rmap code. folio_order() >= 12 only.
+ * @_rmap_sum3: Do not use outside of rmap code. folio_order() >= 12 only.
+ * @_rmap_sum4: Do not use outside of rmap code. folio_order() >= 12 only.
  *
  * A folio is a physically, virtually and logically contiguous set
  * of bytes.  It is a power-of-two in size, and it is aligned to that
@@ -356,6 +368,9 @@ struct folio {
 			atomic_t _pincount;
 #ifdef CONFIG_64BIT
 			unsigned int _folio_nr_pages;
+			unsigned char _unused_1[3];
+			unsigned char _rmap_state;
+			unsigned long _rmap_sum0;
 #endif
 	/* private: the union with struct page is transitional */
 		};
@@ -380,6 +395,21 @@ struct folio {
 	/* private: the union with struct page is transitional */
 		};
 		struct page __page_2;
+	};
+	union {
+		struct {
+			unsigned long _flags_3;
+			unsigned long _head_3;
+	/* public: */
+			unsigned long _rmap_sum1;
+			unsigned long _rmap_sum2;
+#ifdef CONFIG_64BIT
+			unsigned long _rmap_sum3;
+			unsigned long _rmap_sum4;
+#endif
+	/* private: the union with struct page is transitional */
+		};
+		struct page __page_3;
 	};
 };
 
@@ -416,6 +446,12 @@ FOLIO_MATCH(flags, _flags_2);
 FOLIO_MATCH(compound_head, _head_2);
 FOLIO_MATCH(flags, _flags_2a);
 FOLIO_MATCH(compound_head, _head_2a);
+#undef FOLIO_MATCH
+#define FOLIO_MATCH(pg, fl)						\
+	static_assert(offsetof(struct folio, fl) ==			\
+			offsetof(struct page, pg) + 3 * sizeof(struct page))
+FOLIO_MATCH(flags, _flags_3);
+FOLIO_MATCH(compound_head, _head_3);
 #undef FOLIO_MATCH
 
 /**
@@ -758,6 +794,22 @@ struct mm_cid {
 };
 #endif
 
+#ifdef CONFIG_RMAP_ID
+struct rmap_id {
+	int id;
+	/*
+	 * Precomputed unit values derived from mm_rmap_id that we use to modify
+	 * the folio->_rmap_sum* whenever we adjust the folio->_large_mapcount.
+	 *
+	 * If a bit in mm_rmap_id is set, the corresponding counter bit in the
+	 * unit is set.
+	 */
+	unsigned long unit_1;
+	unsigned long unit_2[2];
+	unsigned long unit_5[5];
+};
+#endif
+
 struct kioctx_table;
 struct iommu_mm_data;
 struct mm_struct {
@@ -1003,6 +1055,9 @@ struct mm_struct {
 #endif
 		} lru_gen;
 #endif /* CONFIG_LRU_GEN_WALKS_MMU */
+#ifdef CONFIG_RMAP_ID
+	struct rmap_id mm_rmap_id;
+#endif /* CONFIG_RMAP_ID */
 	} __randomize_layout;
 
 	/*

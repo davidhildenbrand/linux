@@ -1763,7 +1763,7 @@ bool madvise_free_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	 * If other processes are mapping this folio, we couldn't discard
 	 * the folio unless they all do MADV_FREE so let's skip the folio.
 	 */
-	if (folio_likely_mapped_shared(folio))
+	if (folio_likely_mapped_shared(folio, vma->vm_mm))
 		goto out;
 
 	if (!folio_trylock(folio))
@@ -2849,8 +2849,8 @@ static void __split_huge_page_tail(struct folio *folio, int tail,
 			 (1L << PG_dirty) |
 			 LRU_GEN_MASK | LRU_REFS_MASK));
 
-	/* ->mapping in first and second tail page is replaced by other uses */
-	VM_BUG_ON_PAGE(tail > 2 && page_tail->mapping != TAIL_MAPPING,
+	/* ->mapping in first, second and third tail page is replaced by other uses */
+	VM_BUG_ON_PAGE(tail > 3 && page_tail->mapping != TAIL_MAPPING,
 			page_tail);
 	page_tail->mapping = head->mapping;
 	page_tail->index = head->index + tail;

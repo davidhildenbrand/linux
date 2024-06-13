@@ -653,12 +653,10 @@ static inline void prep_compound_head(struct page *page, unsigned int order)
 	struct folio *folio = (struct folio *)page;
 
 	folio_set_order(folio, order);
-	atomic_set(&folio->_large_mapcount, -1);
-	atomic_set(&folio->_entire_mapcount, -1);
-	atomic_set(&folio->_nr_pages_mapped, 0);
 	atomic_set(&folio->_pincount, 0);
 	if (order > 1)
 		INIT_LIST_HEAD(&folio->_deferred_list);
+	__folio_prep_large_mapcount(folio, order);
 }
 
 static inline void prep_compound_tail(struct page *head, int tail_idx)

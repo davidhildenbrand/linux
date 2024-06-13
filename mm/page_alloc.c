@@ -957,6 +957,14 @@ static int free_tail_page_prepare(struct page *head_page, struct page *page)
 			goto out;
 		}
 		break;
+	case 3:
+		/*
+		 * In the third tail page folio->_rmap_sum* might
+		 * overlap ->mapping.
+		 */
+		if (IS_ENABLED(CONFIG_RMAP_ID))
+			break;
+		fallthrough;
 	default:
 		if (page->mapping != TAIL_MAPPING) {
 			bad_page(page, "corrupted mapping in tail page");
@@ -1060,8 +1068,10 @@ __always_inline bool free_pages_prepare(struct page *page,
 	if (unlikely(order)) {
 		int i;
 
-		if (compound)
+		if (compound) {
+			__folio_undo_large_mapcount(page_folio(page));
 			page[1].flags &= ~PAGE_FLAGS_SECOND;
+		}
 		for (i = 1; i < (1 << order); i++) {
 			if (compound)
 				bad += free_tail_page_prepare(page, page + i);
