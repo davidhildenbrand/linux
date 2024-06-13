@@ -581,7 +581,7 @@ static int __collapse_huge_page_isolate(struct vm_area_struct *vma,
 		VM_BUG_ON_FOLIO(!folio_test_anon(folio), folio);
 
 		/* See hpage_collapse_scan_pmd(). */
-		if (folio_likely_mapped_shared(folio)) {
+		if (folio_likely_mapped_shared(folio, vma->vm_mm)) {
 			++shared;
 			if (cc->is_khugepaged &&
 			    shared > khugepaged_max_ptes_shared) {
@@ -1325,10 +1325,10 @@ static int hpage_collapse_scan_pmd(struct mm_struct *mm,
 		/*
 		 * We treat a single page as shared if any part of the THP
 		 * is shared. "False negatives" from
-		 * folio_likely_mapped_shared() are not expected to matter
-		 * much in practice.
+		 * folio_likely_mapped_shared() possible in some kernel configs
+		 * are not expected to matter much in practice.
 		 */
-		if (folio_likely_mapped_shared(folio)) {
+		if (folio_likely_mapped_shared(folio, vma->vm_mm)) {
 			++shared;
 			if (cc->is_khugepaged &&
 			    shared > khugepaged_max_ptes_shared) {

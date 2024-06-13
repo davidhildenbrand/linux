@@ -831,6 +831,17 @@ choice
 	  enabled at runtime via sysfs.
 endchoice
 
+config RMAP_ID
+	bool "Rmap ID tracking"
+	depends on TRANSPARENT_HUGEPAGE && 64BIT
+	help
+	  Use per-MM rmap IDs to precisely track whether partially mappable
+	  huge pages are "mapped shared" or "mapped exclusively".
+
+	  This tracking allow for efficiently and precisely detecting whether
+	  a PTE-mapped THP is mapped by a single process ("mapped exclusively")
+	  or mapped by multiple ones ("mapped shared").
+
 config THP_SWAP
 	def_bool y
 	depends on TRANSPARENT_HUGEPAGE && ARCH_WANTS_THP_SWAP && SWAP && 64BIT

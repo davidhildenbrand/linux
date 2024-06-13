@@ -2137,10 +2137,25 @@ static inline size_t folio_size(struct folio *folio)
 	return PAGE_SIZE << folio_order(folio);
 }
 
+#ifdef CONFIG_RMAP_ID
+bool __folio_large_mapped_shared(struct folio *folio, struct mm_struct *mm);
+static inline bool folio_large_mapped_shared(struct folio *folio,
+		struct mm_struct *mm)
+{
+	unsigned char rmap_state = READ_ONCE(folio->_rmap_state);
+
+	if (rmap_state != RMAP_STATE_MAYBE_SHARED)
+		return rmap_state == RMAP_STATE_SHARED;
+
+	return __folio_large_mapped_shared(folio, mm);
+}
+#endif /* CONFIG_RMAP_ID */
+
 /**
  * folio_likely_mapped_shared - Estimate if the folio is mapped into the page
  *				tables of more than one MM
  * @folio: The folio.
+ * @mm: The MM into which this folio is mapped.
  *
  * This function checks if the folio is currently mapped into more than one
  * MM ("mapped shared"), or if the folio is only mapped into a single MM
@@ -2160,7 +2175,8 @@ static inline size_t folio_size(struct folio *folio)
  * For other folios, the result can be fuzzy:
  *    #. For partially-mappable large folios (THP), the return value can wrongly
  *       indicate "mapped exclusively" (false negative) when the folio is
- *       only partially mapped into at least one MM.
+ *       only partially mapped into at least one MM. With CONFIG_RMAP_ID, this
+ *       works correctly.
  *    #. For pagecache folios (including hugetlb), the return value can wrongly
  *       indicate "mapped shared" (false positive) when two VMAs in the same MM
  *       cover the same file range.
@@ -2175,9 +2191,13 @@ static inline size_t folio_size(struct folio *folio)
  *    #. If hugetlb page table sharing applies. Callers might want to check
  *       hugetlb_pmd_shared().
  *
+ * This function must be called while the folio is mapped into the MM, and
+ * while it cannot concurrently get unmapped (e.g., holding PT lock).
+ *
  * Return: Whether the folio is estimated to be mapped into more than one MM.
  */
-static inline bool folio_likely_mapped_shared(struct folio *folio)
+static inline bool folio_likely_mapped_shared(struct folio *folio,
+		struct mm_struct *mm)
 {
 	int mapcount = folio_mapcount(folio);
 
@@ -2185,6 +2205,9 @@ static inline bool folio_likely_mapped_shared(struct folio *folio)
 	if (!folio_test_large(folio) || unlikely(folio_test_hugetlb(folio)))
 		return mapcount > 1;
 
+#ifdef CONFIG_RMAP_ID
+	return folio_large_mapped_shared(folio, mm);
+#else
 	/* A single mapping implies "mapped exclusively". */
 	if (mapcount <= 1)
 		return false;
@@ -2195,6 +2218,7 @@ static inline bool folio_likely_mapped_shared(struct folio *folio)
 
 	/* Let's guess based on the first subpage. */
 	return atomic_read(&folio->_mapcount) > 0;
+#endif
 }
 
 #ifndef HAVE_ARCH_MAKE_PAGE_ACCESSIBLE

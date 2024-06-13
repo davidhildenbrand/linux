@@ -2139,7 +2139,8 @@ static int add_page_for_migration(struct mm_struct *mm, const void __user *p,
 		goto out_putfolio;
 
 	err = -EACCES;
-	if (folio_likely_mapped_shared(folio) && !migrate_all)
+	/* TODO: check under PTL! */
+	if (folio_likely_mapped_shared(folio, mm) && !migrate_all)
 		goto out_putfolio;
 
 	err = -EBUSY;
@@ -2552,7 +2553,7 @@ int migrate_misplaced_folio_prepare(struct folio *folio,
 		 * when we cannot easily detect if a folio is shared.
 		 */
 		if ((vma->vm_flags & VM_EXEC) &&
-		    folio_likely_mapped_shared(folio))
+		    folio_likely_mapped_shared(folio, vma->vm_mm))
 			return -EACCES;
 
 		/*

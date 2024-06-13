@@ -3575,8 +3575,59 @@ static bool wp_can_reuse_anon_folio(struct folio *folio,
 	 * reuse in that scenario, and give back a large folio a bit
 	 * sooner.
 	 */
-	if (folio_test_large(folio))
+	if (folio_test_large(folio)) {
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			int mapcount = folio_large_mapcount(folio);
+			bool shared;
+
+			/* Let's just free up the large folio. */
+			if (mapcount == 1)
+				return false;
+
+			if (mapcount != folio_ref_count(folio))
+				return false;
+			if (folio->_rmap_state == RMAP_STATE_SHARED)
+				return false;
+
+			folio_large_mapcount_lock(folio);
+			shared = __folio_large_mapped_shared_locked(folio, vma->vm_mm);
+			if (!shared) {
+				bool checked = false;
+
+recheck:
+				mapcount = folio_large_mapcount(folio);
+				if (mapcount != folio_ref_count(folio))
+					shared = true;
+
+				if (IS_ENABLED(CONFIG_DEBUG_VM) && !shared &&
+				    folio_test_swapcache(folio)) {
+					if (!checked) {
+						checked = true;
+						goto recheck;
+					}
+					VM_WARN_ON_FOLIO(true, folio);
+					shared = true;
+				}
+			}
+			folio_large_mapcount_unlock(folio);
+
+			/*
+			 * We verified that there are no unexpected references
+			 * while concurrent (un)mapping was blocked by the
+			 * rmap lock. We are mapping this folio and it is
+			 * mapped exclusively -> our MM owns all mappings.
+			 * This folio is completely exclusive to us and we can
+			 * safely reuse it.
+			 *
+			 * KSM and LRU cache does not apply to large folios. The
+			 * folio could not have been in the swapcache when we
+			 * checked above, otherwise there would be an additional
+			 * reference.
+			 */
+			return !shared;
+		}
 		return false;
+	}
 
 	/*
 	 * We have to verify under folio lock: these early checks are
@@ -5329,7 +5380,8 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	 * Flag if the folio is shared between multiple address spaces. This
 	 * is later used when determining whether to group tasks together
 	 */
-	if (folio_likely_mapped_shared(folio) && (vma->vm_flags & VM_SHARED))
+	if ((vma->vm_flags & VM_SHARED) &&
+	    folio_likely_mapped_shared(folio, vma->vm_mm))
 		flags |= TNF_SHARED;
 
 	nid = folio_nid(folio);

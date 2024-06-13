@@ -1139,7 +1139,7 @@ int pfn_mkclean_range(unsigned long pfn, unsigned long nr_pages, pgoff_t pgoff,
 
 static __always_inline unsigned int __folio_add_rmap(struct folio *folio,
 		struct page *page, int nr_pages, enum rmap_level level,
-		int *nr_pmdmapped)
+		int *nr_pmdmapped, struct vm_area_struct *vma)
 {
 	atomic_t *mapped = &folio->_nr_pages_mapped;
 	const int orig_nr_pages = nr_pages;
@@ -1162,10 +1162,30 @@ static __always_inline unsigned int __folio_add_rmap(struct folio *folio,
 					nr++;
 			}
 		} while (page++, --nr_pages > 0);
-		atomic_add(orig_nr_pages, &folio->_large_mapcount);
+
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			folio_large_mapcount_add(folio, orig_nr_pages, vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_add(orig_nr_pages, &folio->_large_mapcount);
+		}
 		break;
 	case RMAP_LEVEL_PMD:
-		first = atomic_inc_and_test(&folio->_entire_mapcount);
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			int entire_val;
+
+			folio_large_mapcount_lock(folio);
+			entire_val = atomic_read(&folio->_entire_mapcount) + 1;
+			atomic_set(&folio->_entire_mapcount, entire_val);
+			folio_large_mapcount_add(folio, 1, vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+
+			first = entire_val == 0;
+		} else {
+			first = atomic_inc_and_test(&folio->_entire_mapcount);
+			atomic_inc(&folio->_large_mapcount);
+		}
 		if (first) {
 			nr = atomic_add_return_relaxed(ENTIRELY_MAPPED, mapped);
 			if (likely(nr < ENTIRELY_MAPPED + ENTIRELY_MAPPED)) {
@@ -1179,7 +1199,6 @@ static __always_inline unsigned int __folio_add_rmap(struct folio *folio,
 				nr = 0;
 			}
 		}
-		atomic_inc(&folio->_large_mapcount);
 		break;
 	}
 	return nr;
@@ -1299,7 +1318,7 @@ static __always_inline void __folio_add_anon_rmap(struct folio *folio,
 
 	VM_WARN_ON_FOLIO(!folio_test_anon(folio), folio);
 
-	nr = __folio_add_rmap(folio, page, nr_pages, level, &nr_pmdmapped);
+	nr = __folio_add_rmap(folio, page, nr_pages, level, &nr_pmdmapped, vma);
 
 	if (likely(!folio_test_ksm(folio)))
 		__page_check_anon_rmap(folio, page, vma, address);
@@ -1433,14 +1452,20 @@ void folio_add_new_anon_rmap(struct folio *folio, struct vm_area_struct *vma,
 				SetPageAnonExclusive(page);
 		}
 
-		/* increment count (starts at -1) */
-		atomic_set(&folio->_large_mapcount, nr - 1);
+		if (IS_ENABLED(CONFIG_RMAP_ID))
+			folio_large_mapcount_init(folio, nr, vma->vm_mm);
+		else
+			/* increment count (starts at -1) */
+			atomic_set(&folio->_large_mapcount, nr - 1);
 		atomic_set(&folio->_nr_pages_mapped, nr);
 	} else {
 		/* increment count (starts at -1) */
 		atomic_set(&folio->_entire_mapcount, 0);
-		/* increment count (starts at -1) */
-		atomic_set(&folio->_large_mapcount, 0);
+		if (IS_ENABLED(CONFIG_RMAP_ID))
+			folio_large_mapcount_init(folio, 1, vma->vm_mm);
+		else
+			/* increment count (starts at -1) */
+			atomic_set(&folio->_large_mapcount, 0);
 		atomic_set(&folio->_nr_pages_mapped, ENTIRELY_MAPPED);
 		if (exclusive)
 			SetPageAnonExclusive(&folio->page);
@@ -1458,7 +1483,7 @@ static __always_inline void __folio_add_file_rmap(struct folio *folio,
 
 	VM_WARN_ON_FOLIO(folio_test_anon(folio), folio);
 
-	nr = __folio_add_rmap(folio, page, nr_pages, level, &nr_pmdmapped);
+	nr = __folio_add_rmap(folio, page, nr_pages, level, &nr_pmdmapped, vma);
 	__folio_mod_stat(folio, nr, nr_pmdmapped);
 
 	/* See comments in folio_add_anon_rmap_*() */
@@ -1520,7 +1545,14 @@ static __always_inline void __folio_remove_rmap(struct folio *folio,
 			break;
 		}
 
-		atomic_sub(nr_pages, &folio->_large_mapcount);
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			folio_large_mapcount_sub(folio, nr_pages, vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_sub(nr_pages, &folio->_large_mapcount);
+		}
+
 		do {
 			last = atomic_add_negative(-1, &page->_mapcount);
 			if (last) {
@@ -1533,8 +1565,21 @@ static __always_inline void __folio_remove_rmap(struct folio *folio,
 		partially_mapped = nr && atomic_read(mapped);
 		break;
 	case RMAP_LEVEL_PMD:
-		atomic_dec(&folio->_large_mapcount);
-		last = atomic_add_negative(-1, &folio->_entire_mapcount);
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			int entire_val;
+
+			folio_large_mapcount_lock(folio);
+			entire_val = atomic_read(&folio->_entire_mapcount) - 1;
+			atomic_set(&folio->_entire_mapcount, entire_val);
+			folio_large_mapcount_sub(folio, 1, vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+
+			last = entire_val < 0;
+		} else {
+			atomic_dec(&folio->_large_mapcount);
+			last = atomic_add_negative(-1, &folio->_entire_mapcount);
+		}
+
 		if (last) {
 			nr = atomic_sub_return_relaxed(ENTIRELY_MAPPED, mapped);
 			if (likely(nr < ENTIRELY_MAPPED)) {
@@ -2733,3 +2778,66 @@ void hugetlb_add_new_anon_rmap(struct folio *folio,
 	SetPageAnonExclusive(&folio->page);
 }
 #endif /* CONFIG_HUGETLB_PAGE */
+
+#ifdef CONFIG_RMAP_ID
+static DEFINE_IDA(rmap_ida);
+
+int rmap_id_init(struct rmap_id *rmap_id)
+{
+	int id = ida_alloc_range(&rmap_ida, RMAP_ID_MIN, RMAP_ID_MAX, GFP_KERNEL);
+	int pos = 0, bit_nr;
+
+	if (id < 0)
+		return id;
+
+	memset(rmap_id, 0, sizeof(*rmap_id));
+	rmap_id->id = id;
+
+	/*
+	 * Precompute the unit values we add/remove when
+	 * incrementing/decrementing the folio mapcount.
+	 */
+	while (id) {
+		if (id & 1) {
+			VM_WARN_ON_ONCE(pos >= RMAP_ID_NR_BITS);
+
+			bit_nr = pos * RMAP_ID_UNIT_1UL_COUNTER_BITS;
+			rmap_id->unit_1 |= 1UL << bit_nr;
+
+			bit_nr = pos * RMAP_ID_UNIT_2UL_COUNTER_BITS;
+			rmap_id->unit_2[bit_nr / 64] |= 1UL << (bit_nr % 64);
+
+			bit_nr = pos * RMAP_ID_UNIT_4UL_COUNTER_BITS;
+			rmap_id->unit_4[bit_nr / 64] |= 1UL << (bit_nr % 64);
+
+			bit_nr = pos * RMAP_ID_UNIT_7UL_COUNTER_BITS;
+			rmap_id->unit_7[bit_nr / 64] |= 1UL << (bit_nr % 64);
+		}
+		id >>= 1;
+		pos++;
+	}
+
+	return 0;
+}
+
+void rmap_id_destroy(struct rmap_id *rmap_id)
+{
+	if (rmap_id->id == RMAP_ID_DUMMY)
+		return;
+	if (WARN_ON_ONCE(rmap_id->id < RMAP_ID_MIN || rmap_id->id > RMAP_ID_MAX))
+		return;
+	ida_free(&rmap_ida, rmap_id->id);
+	rmap_id->id = RMAP_ID_DUMMY;
+}
+
+bool __folio_large_mapped_shared(struct folio *folio, struct mm_struct *mm)
+{
+	bool shared;
+
+	folio_large_mapcount_lock(folio);
+	shared = __folio_large_mapped_shared_locked(folio, mm);
+	folio_large_mapcount_unlock(folio);
+
+	return shared;
+}
+#endif /* CONFIG_RMAP_ID */

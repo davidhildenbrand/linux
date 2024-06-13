@@ -13,6 +13,7 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/memremap.h>
+#include <linux/bit_spinlock.h>
 
 /*
  * The anon_vma heads a list of private "related" vmas, to scan if
@@ -172,6 +173,389 @@ static inline void anon_vma_merge(struct vm_area_struct *vma,
 }
 
 struct anon_vma *folio_get_anon_vma(struct folio *folio);
+
+#ifdef CONFIG_RMAP_ID
+/*
+ * For init_mm and friends, we don't actually expect to ever rmap pages. So
+ * we use a reserved dummy ID that we'll never hand out the normal way.
+ *
+ * We support 1M rmap IDs, which is less than the maximum number of PIDs we
+ * support, however (a) each thread gets a separate PID, so we don't really
+ * expect to have that many processes; (c) the PID space is bigger to minimize
+ * issues with frequent reuse of PIDs, which is not an issue for rmap IDs
+ * and; (c) even having 1M simplistic processes already results in quite a
+ * severe memory consumption. Consequently, we don't expect to have more than
+ * 1M processes in sane environments.
+ *
+ * 1M rmap IDs require 20 bit: so we need 20 individual counters for our
+ * tracking purposes. 2^20 = 1M.
+ */
+#define RMAP_ID_DUMMY		0
+#define RMAP_ID_NR_BITS		20
+#define RMAP_ID_MIN		(RMAP_ID_DUMMY + 1)
+#define RMAP_ID_MAX		((1U << RMAP_ID_NR_BITS) - 1)
+
+int rmap_id_init(struct rmap_id *rmap_id);
+void rmap_id_destroy(struct rmap_id *rmap_id);
+
+/*
+ * 3bit per counter -> 2^2 won't overflow -> suitable for up to order-2.
+ * 21 counters per 64bit. Need 1x 64bit value (1*21 = 21 >= 20 counters).
+ */
+#define RMAP_ID_UNIT_1UL_MAX_ORDER	2
+#define RMAP_ID_UNIT_1UL_COUNTER_BITS	(RMAP_ID_UNIT_1UL_MAX_ORDER + 1)
+
+/*
+ * 6bit per counter -> 2^5 won't overflow -> suitable for up to order-5.
+ * 10 counters per 64bit. Need 2x 64bit values (2*10 == 20 counters).
+ */
+#define RMAP_ID_UNIT_2UL_MIN_ORDER	(RMAP_ID_UNIT_1UL_MAX_ORDER + 1)
+#define RMAP_ID_UNIT_2UL_MAX_ORDER	5
+#define RMAP_ID_UNIT_2UL_COUNTER_BITS		(RMAP_ID_UNIT_2UL_MAX_ORDER + 1)
+
+/*
+ * 12bit per counter -> 2^11 won't overflow -> suitable for up to order-11.
+ * 5 counter per 64bit. Need 4x 64bit values (4*5 == 20 counters).
+ */
+#define RMAP_ID_UNIT_4UL_MIN_ORDER	(RMAP_ID_UNIT_2UL_MAX_ORDER + 1)
+#define RMAP_ID_UNIT_4UL_MAX_ORDER	11
+#define RMAP_ID_UNIT_4UL_COUNTER_BITS	(RMAP_ID_UNIT_4UL_MAX_ORDER + 1)
+
+/*
+ * 21bit per counter -> 2^20 won't overflow -> suitable for up to order-20.
+ * 3 counter per 64bit. Need 7x 64bit values (7*3 >= 20 counters).
+ */
+#define RMAP_ID_UNIT_7UL_MIN_ORDER	(RMAP_ID_UNIT_4UL_MAX_ORDER + 1)
+#define RMAP_ID_UNIT_7UL_MAX_ORDER	20
+#define RMAP_ID_UNIT_7UL_COUNTER_BITS	(RMAP_ID_UNIT_7UL_MAX_ORDER + 1)
+
+static __always_inline void folio_large_mapcount_lock(struct folio *folio)
+{
+	bit_spin_lock(PG_large_rmap_lock, &folio->_flags_1);
+}
+
+static __always_inline void folio_large_mapcount_unlock(struct folio *folio)
+{
+	bit_spin_unlock(PG_large_rmap_lock, &folio->_flags_1);
+}
+
+static inline bool folio_large_mapcount_is_locked(struct folio *folio)
+{
+	return bit_spin_is_locked(PG_large_rmap_lock, &folio->_flags_1);
+}
+
+static inline void folio_large_mapcount_init_lock(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(folio_large_mapcount_is_locked(folio));
+}
+
+static inline void __folio_prep_large_mapcount_metadata(struct folio *folio,
+		unsigned int order)
+{
+	folio_large_mapcount_init_lock(folio);
+	folio->_rmap_state = RMAP_STATE_EXCLUSIVE;
+	switch (order) {
+	case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+		folio->_rmap_sum6 = 0;
+		folio->_rmap_sum5 = 0;
+		folio->_rmap_sum4 = 0;
+		fallthrough;
+	case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+		folio->_rmap_sum3 = 0;
+		folio->_rmap_sum2 = 0;
+		fallthrough;
+	case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+		folio->_rmap_sum1 = 0;
+		fallthrough;
+	default:
+		folio->_rmap_sum0 = 0;
+		break;
+	}
+}
+
+static inline void __folio_undo_large_mapcount_metadata(struct folio *folio,
+		unsigned int order)
+{
+#ifdef CONFIG_DEBUG_VM
+	VM_WARN_ON_ONCE(folio_large_mapcount_is_locked(folio));
+	switch (order) {
+	case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+		VM_WARN_ON_ONCE(folio->_rmap_sum6);
+		VM_WARN_ON_ONCE(folio->_rmap_sum5);
+		VM_WARN_ON_ONCE(folio->_rmap_sum4);
+	case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+		VM_WARN_ON_ONCE(folio->_rmap_sum3);
+		VM_WARN_ON_ONCE(folio->_rmap_sum2);
+		fallthrough;
+	case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+		VM_WARN_ON_ONCE(folio->_rmap_sum1);
+		fallthrough;
+	default:
+		VM_WARN_ON_ONCE(folio->_rmap_sum0);
+		break;
+	}
+#endif /* CONFIG_DEBUG_VM */
+}
+
+static __always_inline const unsigned long *__folio_large_mapcount_units(struct folio *folio,
+		struct mm_struct *mm)
+{
+	VM_WARN_ON_FOLIO(folio_test_hugetlb(folio), folio);
+	VM_WARN_ON_FOLIO(!folio_test_large(folio), folio);
+	VM_WARN_ON_ONCE(mm->mm_rmap_id.id == RMAP_ID_DUMMY);
+	VM_WARN_ON_ONCE(folio_large_order(folio) > RMAP_ID_UNIT_7UL_MAX_ORDER);
+
+	switch (folio_large_order(folio)) {
+	case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+		return mm->mm_rmap_id.unit_7;
+	case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+		return mm->mm_rmap_id.unit_4;
+	case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+		return mm->mm_rmap_id.unit_2;
+	default:
+		return &mm->mm_rmap_id.unit_1;
+	}
+}
+
+static __always_inline void folio_large_mapcount_init(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	const unsigned long *units = __folio_large_mapcount_units(folio, mm);
+	const unsigned int shift = ilog2(count);
+
+	WARN_ON_ONCE(!count || !is_power_of_2(count));
+	WARN_ON_ONCE(folio->_rmap_state != RMAP_STATE_EXCLUSIVE);
+
+	/* increment count (starts at -1) */
+	atomic_set(&folio->_large_mapcount, count - 1);
+	switch (folio_large_order(folio)) {
+	case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+		folio->_rmap_sum6 = units[6] << shift;
+		folio->_rmap_sum5 = units[5] << shift;
+		folio->_rmap_sum4 = units[4] << shift;
+		break;
+	case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+		folio->_rmap_sum3 = units[3] << shift;
+		folio->_rmap_sum2 = units[2] << shift;
+		break;
+	case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+		folio->_rmap_sum1 = units[1] << shift;
+		break;
+	default:
+		folio->_rmap_sum0 = units[0] << shift;
+		break;
+	}
+}
+
+static __always_inline void __folio_large_mapcount_mod(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	const unsigned long *units = __folio_large_mapcount_units(folio, mm);
+	/* No concurrent writes: allow the compiler to reuse the value. */
+	const int mapcount_val = folio->_large_mapcount.counter;
+
+	atomic_set(&folio->_large_mapcount, mapcount_val + count);
+
+	/* In the common case, we can avoid multiplications. */
+	if (likely(is_power_of_2(count))) {
+		int shift = ilog2(count);
+
+		switch (folio_large_order(folio)) {
+		case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+			folio->_rmap_sum6 += units[6] << shift;
+			folio->_rmap_sum5 += units[5] << shift;
+			folio->_rmap_sum4 += units[4] << shift;
+			break;
+		case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+			folio->_rmap_sum3 += units[3] << shift;
+			folio->_rmap_sum2 += units[2] << shift;
+			break;
+		case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+			folio->_rmap_sum1 += units[1] << shift;
+			break;
+		default:
+			folio->_rmap_sum0 += units[0] << shift;
+			break;
+		}
+	} else {
+		switch (folio_large_order(folio)) {
+		case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+			folio->_rmap_sum6 += units[6] * count;
+			folio->_rmap_sum5 += units[5] * count;
+			folio->_rmap_sum4 += units[4] * count;
+			break;
+		case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+			folio->_rmap_sum3 += units[3] * count;
+			folio->_rmap_sum2 += units[2] * count;
+			break;
+		case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+			folio->_rmap_sum1 += units[1] * count;
+			break;
+		default:
+			folio->_rmap_sum0 += units[0] * count;
+			break;
+		}
+	}
+}
+
+static inline bool __folio_large_certainly_mapped_exclusively(struct folio *folio)
+{
+	/* No concurrent writes: allow the compiler to reuse the value. */
+	const int mapcount = folio->_large_mapcount.counter + 1;
+
+	VM_WARN_ON_ONCE(!folio_large_mapcount_is_locked(folio));
+
+	/*
+	 * With at most one mapping, we consider the folio certainly mapped
+	 * exclusively.
+	 */
+	return mapcount <= 1;
+}
+
+static inline bool __folio_large_certainly_mapped_shared(struct folio *folio)
+{
+	/* No concurrent writes: allow the compiler to reuse the values. */
+	const int mapcount = folio->_large_mapcount.counter + 1;
+	const long entire_mapcount = folio->_entire_mapcount.counter + 1;
+
+	VM_WARN_ON_ONCE(!folio_large_mapcount_is_locked(folio));
+	VM_WARN_ON_ONCE(mapcount < entire_mapcount);
+
+	/*
+	 * If at least one page is mapped twice, we consider the folio
+	 * certainly mapped shared.
+	 */
+	return ((entire_mapcount << folio_large_order(folio)) +
+		(mapcount - entire_mapcount)) > folio_large_nr_pages(folio);
+}
+
+static __always_inline void folio_large_mapcount_add(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	VM_WARN_ON_ONCE(count <= 0);
+	__folio_large_mapcount_mod(folio, count, mm);
+	/*
+	 * When adding mappings we might transition from exclusive to shared
+	 * state. We expect that any entire mapcount adjustments already
+	 * happened before this call.
+	 */
+	if (folio->_rmap_state == RMAP_STATE_SHARED)
+		return;
+	else if (__folio_large_certainly_mapped_exclusively(folio))
+		VM_WARN_ON(folio->_rmap_state != RMAP_STATE_EXCLUSIVE);
+	else if (__folio_large_certainly_mapped_shared(folio))
+		folio->_rmap_state = RMAP_STATE_SHARED;
+	else
+		folio->_rmap_state = RMAP_STATE_MAYBE_SHARED;
+}
+
+static __always_inline void folio_large_mapcount_dup(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	VM_WARN_ON_ONCE(count <= 0);
+	__folio_large_mapcount_mod(folio, count, mm);
+	/* When called via fork(), we certainly have a shared mapping. */
+	folio->_rmap_state = RMAP_STATE_SHARED;
+}
+
+static __always_inline void folio_large_mapcount_sub(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	VM_WARN_ON_ONCE(count <= 0);
+	__folio_large_mapcount_mod(folio, -count, mm);
+	/*
+	 * When removing mappings we might transition from shared to exclusive
+	 * state. We expect that any entire mapcount adjustments already
+	 * happened before this call.
+	 */
+	if (folio->_rmap_state == RMAP_STATE_EXCLUSIVE)
+		return;
+	else if (__folio_large_certainly_mapped_exclusively(folio))
+		folio->_rmap_state = RMAP_STATE_EXCLUSIVE;
+	else if (__folio_large_certainly_mapped_shared(folio))
+		folio->_rmap_state = RMAP_STATE_SHARED;
+	else
+		folio->_rmap_state = RMAP_STATE_MAYBE_SHARED;
+}
+
+static inline bool __folio_large_mapped_shared_locked(struct folio *folio,
+		struct mm_struct *mm)
+{
+	const unsigned long *units = __folio_large_mapcount_units(folio, mm);
+	const int count = folio_large_mapcount(folio);
+	unsigned long diff = 0;
+
+	VM_WARN_ON_ONCE(!folio_large_mapcount_is_locked(folio));
+
+	if (unlikely(folio->_rmap_state != RMAP_STATE_MAYBE_SHARED))
+		return folio->_rmap_state == RMAP_STATE_SHARED;
+
+	/* (Un)map properly handles these cases and sets SHARED/EXCLUSIVE */
+	VM_WARN_ON_ONCE(__folio_large_certainly_mapped_exclusively(folio));
+	VM_WARN_ON_ONCE(__folio_large_certainly_mapped_shared(folio));
+
+	/*
+	 * We expect to be called here with an MM that actually (still)
+	 * maps this folio! Otherwise, we might wrongly indicate "shared".
+	 * (not really harmful but certainly undesired)
+	 */
+	switch (folio_large_order(folio)) {
+	case RMAP_ID_UNIT_7UL_MIN_ORDER ... RMAP_ID_UNIT_7UL_MAX_ORDER:
+		diff |= folio->_rmap_sum6 ^ (units[6] * count);
+		diff |= folio->_rmap_sum5 ^ (units[5] * count);
+		diff |= folio->_rmap_sum4 ^ (units[4] * count);
+		break;
+	case RMAP_ID_UNIT_4UL_MIN_ORDER ... RMAP_ID_UNIT_4UL_MAX_ORDER:
+		diff |= folio->_rmap_sum3 ^ (units[3] * count);
+		diff |= folio->_rmap_sum2 ^ (units[2] * count);
+		break;
+	case RMAP_ID_UNIT_2UL_MIN_ORDER ... RMAP_ID_UNIT_2UL_MAX_ORDER:
+		diff |= folio->_rmap_sum1 ^ (units[1] * count);
+		break;
+	default:
+		diff |= folio->_rmap_sum0 ^ (units[0] * count);
+		break;
+	}
+	if (diff)
+		folio->_rmap_state = RMAP_STATE_SHARED;
+	else
+		folio->_rmap_state = RMAP_STATE_EXCLUSIVE;
+
+	return diff;
+}
+#else
+static inline void __folio_prep_large_mapcount_metadata(struct folio *folio,
+		unsigned int order)
+{
+}
+static inline void __folio_undo_large_mapcount_metadata(struct folio *folio,
+		unsigned int order)
+{
+}
+static inline void folio_large_mapcount_init(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	BUILD_BUG();
+}
+static inline void folio_large_mapcount_lock(struct folio *folio)
+{
+	BUILD_BUG();
+}
+static inline void folio_large_mapcount_unlock(struct folio *folio)
+{
+	BUILD_BUG();
+}
+static inline void folio_large_mapcount_add(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	BUILD_BUG();
+}
+static inline void folio_large_mapcount_sub(struct folio *folio,
+		int count, struct mm_struct *mm)
+{
+	BUILD_BUG();
+}
+#endif /* CONFIG_RMAP_ID */
 
 /* RMAP flags, currently only relevant for some anon rmap operations. */
 typedef int __bitwise rmap_t;
@@ -339,11 +723,27 @@ static __always_inline void __folio_dup_file_rmap(struct folio *folio,
 		do {
 			atomic_inc(&page->_mapcount);
 		} while (page++, --nr_pages > 0);
-		atomic_add(orig_nr_pages, &folio->_large_mapcount);
+
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			folio_large_mapcount_dup(folio, orig_nr_pages,
+						 dst_vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_add(orig_nr_pages, &folio->_large_mapcount);
+		}
 		break;
 	case RMAP_LEVEL_PMD:
-		atomic_inc(&folio->_entire_mapcount);
-		atomic_inc(&folio->_large_mapcount);
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			atomic_set(&folio->_entire_mapcount,
+				   atomic_read(&folio->_entire_mapcount) + 1);
+			folio_large_mapcount_dup(folio, 1, dst_vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_inc(&folio->_entire_mapcount);
+			atomic_inc(&folio->_large_mapcount);
+		}
 		break;
 	}
 }
@@ -437,7 +837,15 @@ static __always_inline int __folio_try_dup_anon_rmap(struct folio *folio,
 				ClearPageAnonExclusive(page);
 			atomic_inc(&page->_mapcount);
 		} while (page++, --nr_pages > 0);
-		atomic_add(orig_nr_pages, &folio->_large_mapcount);
+
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			folio_large_mapcount_dup(folio, orig_nr_pages,
+						 dst_vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_add(orig_nr_pages, &folio->_large_mapcount);
+		}
 		break;
 	case RMAP_LEVEL_PMD:
 		if (PageAnonExclusive(page)) {
@@ -445,8 +853,17 @@ static __always_inline int __folio_try_dup_anon_rmap(struct folio *folio,
 				return -EBUSY;
 			ClearPageAnonExclusive(page);
 		}
-		atomic_inc(&folio->_entire_mapcount);
-		atomic_inc(&folio->_large_mapcount);
+
+		if (IS_ENABLED(CONFIG_RMAP_ID)) {
+			folio_large_mapcount_lock(folio);
+			atomic_set(&folio->_entire_mapcount,
+				   atomic_read(&folio->_entire_mapcount) + 1);
+			folio_large_mapcount_dup(folio, 1, dst_vma->vm_mm);
+			folio_large_mapcount_unlock(folio);
+		} else {
+			atomic_inc(&folio->_entire_mapcount);
+			atomic_inc(&folio->_large_mapcount);
+		}
 		break;
 	}
 	return 0;
