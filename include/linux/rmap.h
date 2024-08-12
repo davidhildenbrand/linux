@@ -173,6 +173,131 @@ static inline void anon_vma_merge(struct vm_area_struct *vma,
 
 struct anon_vma *folio_get_anon_vma(struct folio *folio);
 
+#ifdef CONFIG_MM_ID
+
+/*
+ * We don't restrict ID0 to less bit, so we can get a slightly more efficient
+ * implementation when reading/writing ID0. The high bits are used for flags,
+ * see FOLIO_MM_IDS_*_BITNUM.
+ */
+#define FOLIO_MM_IDS_ID0_MASK			0x00000000fffffffful
+#define FOLIO_MM_IDS_ID1_SHIFT			32
+#define FOLIO_MM_IDS_ID1_MASK			0x00ffffff00000000ul
+
+static inline unsigned int folio_mm0_id(struct folio *folio)
+{
+	return folio->_mm_ids & FOLIO_MM_IDS_ID0_MASK;
+}
+
+static inline void folio_set_mm0_id(struct folio *folio, unsigned int id)
+{
+	folio->_mm_ids &= ~FOLIO_MM_IDS_ID0_MASK;
+	folio->_mm_ids |= id;
+}
+
+static inline unsigned int folio_mm1_id(struct folio *folio)
+{
+	return (folio->_mm_ids & FOLIO_MM_IDS_ID1_MASK) >> FOLIO_MM_IDS_ID1_SHIFT;
+}
+
+static inline void folio_set_mm1_id(struct folio *folio, unsigned int id)
+{
+	folio->_mm_ids &= ~FOLIO_MM_IDS_ID1_MASK;
+	folio->_mm_ids |= (unsigned long)id << FOLIO_MM_IDS_ID1_SHIFT;
+}
+
+static __always_inline void folio_set_large_mapcount(struct folio *folio,
+		int mapcount, struct vm_area_struct *vma)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+
+	/* Note: mapcounts start at -1. */
+	atomic_set(&folio->_large_mapcount, mapcount - 1);
+	folio->_mm0_mapcount = mapcount - 1;
+	folio_set_mm0_id(folio, vma->vm_mm->mm_id);
+	VM_WARN_ON_ONCE(!folio_test_large_mapped_exclusively(folio));
+	VM_WARN_ON_ONCE(folio->_mm1_mapcount >= 0);
+}
+
+static __always_inline void folio_add_large_mapcount(struct folio *folio,
+		int diff, struct vm_area_struct *vma)
+{
+	const unsigned int mm_id = vma->vm_mm->mm_id;
+	int mapcount_val;
+
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	VM_WARN_ON_ONCE(diff <= 0 || mm_id < MM_ID_MIN || mm_id > MM_ID_MAX);
+
+	folio_lock_large_mapcount_data(folio);
+	/*
+	 * We expect that unmapped folios always have the "mapped exclusively"
+	 * flag set for simplicity.
+	 */
+	VM_WARN_ON_ONCE(atomic_read(&folio->_large_mapcount) < 0 &&
+			!folio_test_large_mapped_exclusively(folio));
+
+	mapcount_val = atomic_read(&folio->_large_mapcount) + diff;
+	atomic_set(&folio->_large_mapcount, mapcount_val);
+
+	if (folio_mm0_id(folio) == mm_id) {
+		folio->_mm0_mapcount += diff;
+		if (folio->_mm0_mapcount != mapcount_val)
+			folio_clear_large_mapped_exclusively(folio);
+	} else if (folio_mm1_id(folio) == mm_id) {
+		folio->_mm1_mapcount += diff;
+		if (folio->_mm1_mapcount != mapcount_val)
+			folio_clear_large_mapped_exclusively(folio);
+	} else if (folio_test_large_mapped_exclusively(folio)) {
+		/*
+		 * We only allow taking over a tracking slot if the folio is
+		 * exclusive, meaning that any mappings belong to exactly one
+		 * tracked MM (which cannot be this MM).
+		 */
+		if (folio->_mm0_mapcount < 0) {
+			folio_set_mm0_id(folio, mm_id);
+			folio->_mm0_mapcount = diff - 1;
+		} else {
+			VM_WARN_ON_ONCE(folio->_mm1_mapcount >= 0);
+			folio_set_mm1_id(folio, mm_id);
+			folio->_mm1_mapcount = diff - 1;
+		}
+		folio_clear_large_mapped_exclusively(folio);
+	}
+	folio_unlock_large_mapcount_data(folio);
+}
+#define folio_inc_large_mapcount(folio, vma) \
+	folio_add_large_mapcount(folio, 1, vma)
+
+static __always_inline void folio_sub_large_mapcount(struct folio *folio,
+		int diff, struct vm_area_struct *vma)
+{
+	const unsigned int mm_id = vma->vm_mm->mm_id;
+	int mapcount_val;
+
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	VM_WARN_ON_ONCE(diff <= 0 || mm_id < MM_ID_MIN || mm_id > MM_ID_MAX);
+
+	folio_lock_large_mapcount_data(folio);
+	mapcount_val = atomic_read(&folio->_large_mapcount) - diff;
+	atomic_set(&folio->_large_mapcount, mapcount_val);
+
+	if (folio_mm0_id(folio) == mm_id)
+		folio->_mm0_mapcount -= diff;
+	else if (folio_mm1_id(folio) == mm_id)
+		folio->_mm1_mapcount -= diff;
+
+	/*
+	 * We only consider folios exclusive if there are no mappings or if
+	 * one tracked MM owns all mappings.
+	 */
+	if (folio->_mm0_mapcount == mapcount_val ||
+	    folio->_mm1_mapcount == mapcount_val)
+		folio_set_large_mapped_exclusively(folio);
+	folio_unlock_large_mapcount_data(folio);
+}
+#define folio_dec_large_mapcount(folio, vma) \
+	folio_sub_large_mapcount(folio, 1, vma)
+#else /* !CONFIG_MM_ID */
 static inline void folio_set_large_mapcount(struct folio *folio, int mapcount,
 		struct vm_area_struct *vma)
 {
@@ -203,6 +328,7 @@ static inline void folio_dec_large_mapcount(struct folio *folio,
 {
 	atomic_dec(&folio->_large_mapcount);
 }
+#endif /* !CONFIG_MM_ID */
 
 /* RMAP flags, currently only relevant for some anon rmap operations. */
 typedef int __bitwise rmap_t;

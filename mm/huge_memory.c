@@ -3193,6 +3193,12 @@ static void __split_huge_page(struct page *page, struct list_head *list,
 
 	ClearPageHasHWPoisoned(head);
 
+#ifdef CONFIG_MM_ID
+	if (!new_order)
+		/* Make sure page->private on the second page is 0. */
+		folio->_mm_ids = 0;
+#endif
+
 	for (i = nr - new_nr; i >= new_nr; i -= new_nr) {
 		__split_huge_page_tail(folio, i, lruvec, list, new_order);
 		/* Some pages can be beyond EOF: drop them from page cache */

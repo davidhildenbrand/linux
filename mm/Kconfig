@@ -846,6 +846,17 @@ choice
 	  enabled at runtime via sysfs.
 endchoice
 
+config MM_ID
+	bool "MM ID tracking"
+	depends on TRANSPARENT_HUGEPAGE && 64BIT
+	help
+	  Use unique per-MM IDs to track whether large allocations, such
+	  as transparent huge pages, that span multiple physical pages
+	  are "mapped shared" or "mapped exclusively" into user page tables.
+	  This information is useful to determine the current owner of such a
+	  large allocation, for example, helpful for the Copy-On-Write reuse
+	  optimization.
+
 config THP_SWAP
 	def_bool y
 	depends on TRANSPARENT_HUGEPAGE && ARCH_WANTS_THP_SWAP && SWAP && 64BIT

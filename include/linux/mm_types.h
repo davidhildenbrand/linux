@@ -311,6 +311,9 @@ typedef struct {
  * @_nr_pages_mapped: Do not use outside of rmap and debug code.
  * @_pincount: Do not use directly, call folio_maybe_dma_pinned().
  * @_nr_pages: Do not use directly, call folio_nr_pages().
+ * @_mm0_mapcount: Do not use outside of rmap code.
+ * @_mm1_mapcount: Do not use outside of rmap code.
+ * @_mm_ids: Do not use outside of rmap code.
  * @_hugetlb_subpool: Do not use directly, use accessor in hugetlb.h.
  * @_hugetlb_cgroup: Do not use directly, use accessor in hugetlb_cgroup.h.
  * @_hugetlb_cgroup_rsvd: Do not use directly, use accessor in hugetlb_cgroup.h.
@@ -377,6 +380,11 @@ struct folio {
 					atomic_t _entire_mapcount;
 					atomic_t _nr_pages_mapped;
 					atomic_t _pincount;
+#ifdef CONFIG_MM_ID
+					int _mm0_mapcount;
+					int _mm1_mapcount;
+					unsigned long _mm_ids;
+#endif /* CONFIG_MM_ID */
 				};
 				unsigned long _usable_1[4];
 			};
@@ -1044,6 +1052,9 @@ struct mm_struct {
 #endif
 		} lru_gen;
 #endif /* CONFIG_LRU_GEN_WALKS_MMU */
+#ifdef CONFIG_MM_ID
+		unsigned int mm_id;
+#endif
 	} __randomize_layout;
 
 	/*
@@ -1052,6 +1063,18 @@ struct mm_struct {
 	 */
 	unsigned long cpu_bitmap[];
 };
+
+#ifdef CONFIG_MM_ID
+/*
+ * For init_mm and friends, we don't allocate an ID and use the dummy value
+ * instead. Limit ourselves to 1M MMs for now: even though we might support
+ * up to 4M PIDs, having more than 1M MM instances is highly unlikely.
+ */
+#define MM_ID_DUMMY		0
+#define MM_ID_NR_BITS		20
+#define MM_ID_MIN		(MM_ID_DUMMY + 1)
+#define MM_ID_MAX		((1U << MM_ID_NR_BITS) - 1)
+#endif /* CONFIG_MM_ID */
 
 #define MM_MT_FLAGS	(MT_FLAGS_ALLOC_RANGE | MT_FLAGS_LOCK_EXTERN | \
 			 MT_FLAGS_USE_RCU)

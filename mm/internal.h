@@ -665,6 +665,12 @@ static inline void prep_compound_head(struct page *page, unsigned int order)
 	atomic_set(&folio->_entire_mapcount, -1);
 	atomic_set(&folio->_nr_pages_mapped, 0);
 	atomic_set(&folio->_pincount, 0);
+#ifdef CONFIG_MM_ID
+	folio->_mm0_mapcount = -1;
+	folio->_mm1_mapcount = -1;
+	folio->_mm_ids = 0;
+	folio_set_large_mapped_exclusively(folio);
+#endif
 	if (order > 1)
 		INIT_LIST_HEAD(&folio->_deferred_list);
 }

@@ -959,6 +959,16 @@ static int free_tail_page_prepare(struct page *head_page, struct page *page)
 			bad_page(page, "nonzero pincount");
 			goto out;
 		}
+#ifdef CONFIG_MM_ID
+		if (unlikely(folio->_mm0_mapcount + 1)) {
+			bad_page(page, "nonzero _mm0_mapcount");
+			goto out;
+		}
+		if (unlikely(folio->_mm1_mapcount + 1)) {
+			bad_page(page, "nonzero _mm1_mapcount");
+			goto out;
+		}
+#endif
 		break;
 	case 2:
 		/* the second tail page: deferred_list overlaps ->mapping */

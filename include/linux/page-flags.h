@@ -11,6 +11,7 @@
 #include <linux/mmdebug.h>
 #ifndef __GENERATING_BOUNDS_H
 #include <linux/mm_types.h>
+#include <linux/bit_spinlock.h>
 #include <generated/bounds.h>
 #endif /* !__GENERATING_BOUNDS_H */
 
@@ -1186,6 +1187,46 @@ static inline int folio_has_private(const struct folio *folio)
 {
 	return !!(folio->flags & PAGE_FLAGS_PRIVATE);
 }
+
+#ifdef CONFIG_MM_ID
+/*
+ * We store two flags (including the bit spinlock) in the upper bits of
+ * folio->_mm_ids, whereby that whole value is protected by the bit spinlock.
+ * This allows for only using an atomic op for acquiring the lock.
+ */
+#define FOLIO_MM_IDS_EXCLUSIVE_BITNUM		62
+#define FOLIO_MM_IDS_LOCK_BITNUM		63
+
+static __always_inline void folio_lock_large_mapcount_data(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	bit_spin_lock(FOLIO_MM_IDS_LOCK_BITNUM, &folio->_mm_ids);
+}
+
+static __always_inline void folio_unlock_large_mapcount_data(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	__bit_spin_unlock(FOLIO_MM_IDS_LOCK_BITNUM, &folio->_mm_ids);
+}
+
+static inline void folio_set_large_mapped_exclusively(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	__set_bit(FOLIO_MM_IDS_EXCLUSIVE_BITNUM, &folio->_mm_ids);
+}
+
+static inline void folio_clear_large_mapped_exclusively(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	__clear_bit(FOLIO_MM_IDS_EXCLUSIVE_BITNUM, &folio->_mm_ids);
+}
+
+static inline bool folio_test_large_mapped_exclusively(struct folio *folio)
+{
+	VM_WARN_ON_ONCE(!folio_test_large(folio) || folio_test_hugetlb(folio));
+	return test_bit(FOLIO_MM_IDS_EXCLUSIVE_BITNUM, &folio->_mm_ids);
+}
+#endif /* CONFIG_MM_ID */
 
 #undef PF_ANY
 #undef PF_HEAD
