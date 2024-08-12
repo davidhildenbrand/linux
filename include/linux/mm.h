@@ -2142,9 +2142,9 @@ static inline size_t folio_size(const struct folio *folio)
  * are independent.
  *
  * As precise information is not easily available for all folios, this function
- * estimates the number of MMs ("sharers") that are currently mapping a folio
- * using the number of times the first page of the folio is currently mapped
- * into page tables.
+ * must sometimes estimate the number of MMs ("sharers") that are currently
+ * mapping a folio using the number of times the first page of the folio is
+ * currently mapped into page tables.
  *
  * For small anonymous folios and anonymous hugetlb folios, the return
  * value will be exactly correct: non-KSM folios can only be mapped at most once
@@ -2152,12 +2152,20 @@ static inline size_t folio_size(const struct folio *folio)
  * considered shared even if mapped multiple times into the same MM.
  *
  * For other folios, the result can be fuzzy:
- *    #. For partially-mappable large folios (THP), the return value can wrongly
- *       indicate "mapped exclusively" (false negative) when the folio is
- *       only partially mapped into at least one MM.
+ *    #. With CONFIG_PAGE_MAPCOUNT: For partially-mappable large folios (THP),
+ *       the return value can wrongly indicate "mapped exclusively" (false
+ *       negative) when the folio is only partially mapped into at least one MM.
+ *    #. With CONFIG_NO_PAGE_MAPCOUNT: For partially-mappable large folios
+ *       (THP), the return value can wrongly indicate "mapped shared" (false
+ *       positive) in some scenarios. This can only happen if two MMs are
+ *       already mapping a folio and a more MM starts mapping the folio. We
+ *       would still the detect the folio as "mapped shared" after the first
+ *       two MMs no longer map the folio.
  *    #. For pagecache folios (including hugetlb), the return value can wrongly
  *       indicate "mapped shared" (false positive) when two VMAs in the same MM
  *       cover the same file range.
+ *
+ * With CONFIG_MM_ID, this function will never return "false negatives".
  *
  * Further, this function only considers current page table mappings that
  * are tracked using the folio mapcount(s).
@@ -2183,12 +2191,16 @@ static inline bool folio_likely_mapped_shared(struct folio *folio)
 	if (mapcount <= 1)
 		return false;
 
+#ifdef CONFIG_PAGE_MAPCOUNT
 	/* If any page is mapped more than once we treat it "mapped shared". */
 	if (folio_entire_mapcount(folio) || mapcount > folio_large_nr_pages(folio))
 		return true;
 
 	/* Let's guess based on the first subpage. */
 	return atomic_read(&folio->_mapcount) > 0;
+#else /* !CONFIG_PAGE_MAPCOUNT */
+	return !folio_test_large_mapped_exclusively(folio);
+#endif /* !CONFIG_PAGE_MAPCOUNT */
 }
 
 #ifndef HAVE_ARCH_MAKE_FOLIO_ACCESSIBLE
