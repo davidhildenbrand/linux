@@ -1078,8 +1078,8 @@ static inline unsigned int folio_large_order(const struct folio *folio)
 
 static inline long folio_large_nr_pages(const struct folio *folio)
 {
-#ifdef CONFIG_64BIT
-	return folio->_folio_nr_pages;
+#ifdef NR_PAGES_IN_LARGE_FOLIO
+	return folio->_nr_pages;
 #else
 	return 1L << folio_large_order(folio);
 #endif
