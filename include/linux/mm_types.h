@@ -378,7 +378,11 @@ struct folio {
 				struct {
 					atomic_t _large_mapcount;
 					atomic_t _entire_mapcount;
+#ifdef CONFIG_PAGE_MAPCOUNT
 					atomic_t _nr_pages_mapped;
+#else /* !CONFIG_PAGE_MAPCOUNT */
+					int _unused_1;
+#endif /* !CONFIG_PAGE_MAPCOUNT */
 					atomic_t _pincount;
 #ifdef CONFIG_MM_ID
 					int _mm0_mapcount;

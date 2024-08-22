@@ -219,7 +219,7 @@ static __always_inline void folio_set_large_mapcount(struct folio *folio,
 	VM_WARN_ON_ONCE(folio->_mm1_mapcount >= 0);
 }
 
-static __always_inline void folio_add_large_mapcount(struct folio *folio,
+static __always_inline int folio_add_large_mapcount(struct folio *folio,
 		int diff, struct vm_area_struct *vma)
 {
 	const unsigned int mm_id = vma->vm_mm->mm_id;
@@ -264,11 +264,12 @@ static __always_inline void folio_add_large_mapcount(struct folio *folio,
 		folio_clear_large_mapped_exclusively(folio);
 	}
 	folio_unlock_large_mapcount_data(folio);
+	return mapcount_val + 1;
 }
 #define folio_inc_large_mapcount(folio, vma) \
 	folio_add_large_mapcount(folio, 1, vma)
 
-static __always_inline void folio_sub_large_mapcount(struct folio *folio,
+static __always_inline int folio_sub_large_mapcount(struct folio *folio,
 		int diff, struct vm_area_struct *vma)
 {
 	const unsigned int mm_id = vma->vm_mm->mm_id;
@@ -294,6 +295,7 @@ static __always_inline void folio_sub_large_mapcount(struct folio *folio,
 	    folio->_mm1_mapcount == mapcount_val)
 		folio_set_large_mapped_exclusively(folio);
 	folio_unlock_large_mapcount_data(folio);
+	return mapcount_val + 1;
 }
 #define folio_dec_large_mapcount(folio, vma) \
 	folio_sub_large_mapcount(folio, 1, vma)
@@ -493,9 +495,11 @@ static __always_inline void __folio_dup_file_rmap(struct folio *folio,
 			break;
 		}
 
+#ifdef CONFIG_PAGE_MAPCOUNT
 		do {
 			atomic_inc(&page->_mapcount);
 		} while (page++, --nr_pages > 0);
+#endif
 		folio_add_large_mapcount(folio, orig_nr_pages, dst_vma);
 		break;
 	case RMAP_LEVEL_PMD:
@@ -592,7 +596,9 @@ static __always_inline int __folio_try_dup_anon_rmap(struct folio *folio,
 		do {
 			if (PageAnonExclusive(page))
 				ClearPageAnonExclusive(page);
+#ifdef CONFIG_PAGE_MAPCOUNT
 			atomic_inc(&page->_mapcount);
+#endif
 		} while (page++, --nr_pages > 0);
 		folio_add_large_mapcount(folio, orig_nr_pages, dst_vma);
 		break;
