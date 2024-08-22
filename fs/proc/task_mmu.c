@@ -2872,7 +2872,13 @@ static void gather_stats(struct page *page, struct numa_maps *md, int pte_dirty,
 			unsigned long nr_pages)
 {
 	struct folio *folio = page_folio(page);
-	int count = folio_precise_page_mapcount(folio, page);
+	int count;
+
+#ifdef CONFIG_PAGE_MAPCOUNT
+	count = folio_precise_page_mapcount(folio, page);
+#else
+	count = min_t(int, folio_average_page_mapcount(folio), 1);
+#endif
 
 	md->pages += nr_pages;
 	if (pte_dirty || folio_test_dirty(folio))
