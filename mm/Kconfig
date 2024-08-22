@@ -878,7 +878,27 @@ config READ_ONLY_THP_FOR_FS
 	  support of file THPs will be developed in the next few release
 	  cycles.
 
+config NO_PAGE_MAPCOUNT
+	bool "No per-page mapcount (EXPERIMENTAL)"
+	depends on TRANSPARENT_HUGEPAGE && MM_ID
+	help
+	  Do not maintain per-page mapcounts for pages part of larger
+	  allocations, such as transparent huge pages.
+
+	  When this config option is enabled, some interfaces that relied on
+	  this information will rely on less-precise per-folio information
+	  instead: for example, using the average per-page mapcount in such
+	  a large allocation instead of the per-page mapcount.
+
+	  EXPERIMENTAL because the severity of some of the implications first
+	  have to be understood properly.
+
 endif # TRANSPARENT_HUGEPAGE
+
+# simple helper to make the code a bit easier to read
+config PAGE_MAPCOUNT
+	def_bool y
+	depends on !NO_PAGE_MAPCOUNT
 
 #
 # The architecture supports pgtable leaves that is larger than PAGE_SIZE
