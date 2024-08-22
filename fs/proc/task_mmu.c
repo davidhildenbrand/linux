@@ -29,6 +29,18 @@
 #include <asm/tlbflush.h>
 #include "internal.h"
 
+#ifdef CONFIG_PAGE_MAPCOUNT
+static bool __folio_page_mapped_exclusively(struct folio *folio, struct page *page)
+{
+	return folio_precise_page_mapcount(folio, page) == 1;
+}
+#else /* !CONFIG_PAGE_MAPCOUNT */
+static bool __folio_page_mapped_exclusively(struct folio *folio, struct page *page)
+{
+	return !folio_likely_mapped_shared(folio);
+}
+#endif /* CONFIG_PAGE_MAPCOUNT */
+
 #define SEQ_PUT_DEC(str, val) \
 		seq_put_decimal_ull_width(m, str, (val) << (PAGE_SHIFT-10), 8)
 void task_mem(struct seq_file *m, struct mm_struct *mm)
@@ -1746,7 +1758,7 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 		if (!folio_test_anon(folio))
 			flags |= PM_FILE;
 		if ((flags & PM_PRESENT) &&
-		    folio_precise_page_mapcount(folio, page) == 1)
+		    __folio_page_mapped_exclusively(folio, page))
 			flags |= PM_MMAP_EXCLUSIVE;
 	}
 	if (vma->vm_flags & VM_SOFTDIRTY)
@@ -1821,7 +1833,7 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 			pagemap_entry_t pme;
 
 			if (folio && (flags & PM_PRESENT) &&
-			    folio_precise_page_mapcount(folio, page + idx) == 1)
+			    __folio_page_mapped_exclusively(folio, page))
 				cur_flags |= PM_MMAP_EXCLUSIVE;
 
 			pme = make_pme(frame, cur_flags);
