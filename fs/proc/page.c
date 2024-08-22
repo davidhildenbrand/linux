@@ -67,9 +67,21 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 		 * memmaps that were actually initialized.
 		 */
 		page = pfn_to_online_page(pfn);
-		if (page)
-			mapcount = folio_precise_page_mapcount(page_folio(page),
-							       page);
+		if (page) {
+			struct folio *folio = page_folio(page);
+
+#ifdef CONFIG_PAGE_MAPCOUNT
+			mapcount = folio_precise_page_mapcount(folio, page);
+#else /* !CONFIG_PAGE_MAPCOUNT */
+			/*
+			 * Indicate the per-page average, but at least "1" for
+			 * mapped folios.
+			 */
+			mapcount = folio_average_page_mapcount(folio);
+			if (!mapcount && folio_test_large(folio) && folio_mapped(folio))
+				mapcount = 1;
+#endif /* !CONFIG_PAGE_MAPCOUNT */
+		}
 
 		if (put_user(mapcount, out)) {
 			ret = -EFAULT;
