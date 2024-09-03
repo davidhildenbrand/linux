@@ -1139,109 +1139,17 @@ static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
 static void virtio_mem_online_logically_offline_pages(unsigned long pfn,
 		unsigned long nr_pages)
 {
-	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
-		return;
-
-	while (nr_pages) {
-		struct page *page = pfn_to_page(pfn);
-		int order = MAX_PAGE_ORDER;
-		unsigned long i;
-		bool dirty;
-
-		/* Try to free in largest granularity possible. */
-		while (!IS_ALIGNED(pfn, 1 << order) || nr_pages < (1 << order))
-			order--;
-
-		/*
-		 * If the page is not PageDirty(), it was kept logically offline
-		 * when onlining the memory block. Otherwise, it was allocated
-		 * using alloc_contig_range(). All pages in a pageblock are
-		 * alike, but we might get called on ranges where individual
-		 * pageblocks differ.
-		 */
-		dirty = PageDirty(page);
-		for (i = pageblock_nr_pages; i < (1 << order); i += pageblock_nr_pages) {
-			if (dirty ^ !!PageDirty(pfn_to_page(pfn + i))) {
-				order = pageblock_order;
-				break;
-			}
-		}
-
-		if (!dirty) {
-			generic_online_page(page, order);
-		} else {
-			for (i = 0; i < (1 << order); i++)
-				/* No need to clear PageDirty(). */
-				__ClearPageOffline(pfn_to_page(pfn + i));
-			adjust_managed_page_count(page, 1 << order);
-			free_contig_range(pfn, 1 << order);
-		}
-
-		pfn += 1 << order;
-		nr_pages -= 1 << order;
-	}
+	online_logically_offline_pages(pfn, nr_pages);
 }
 
 /* Try to logically offline pages. */
 static int virtio_mem_logically_offline_online_pages(struct virtio_mem *vm,
 		unsigned long pfn, unsigned long nr_pages)
 {
-	const bool is_movable = is_zone_movable_page(pfn_to_page(pfn));
-	int rc, retry_count;
-
-	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
-		return -EINVAL;
-
-	/*
-	 * TODO: We want an alloc_contig_range() mode that tries to allocate
-	 * harder (e.g., dealing with temporarily pinned pages, PCP), especially
-	 * with ZONE_MOVABLE. So for now, retry a couple of times with
-	 * ZONE_MOVABLE before giving up - because that zone is supposed to give
-	 * some guarantees.
-	 */
-	for (retry_count = 0; retry_count < 5; retry_count++) {
-		/*
-		 * If the config changed, stop immediately and go back to the
-		 * main loop: avoid trying to keep unplugging if the device
-		 * might have decided to not remove any more memory.
-		 */
-		if (atomic_read(&vm->config_changed))
-			return -EAGAIN;
-
-		/*
-		 * Use noprof: we're allocating the memory to unplug it, not to
-		 * use it. We might offline and remove these pages without
-		 * ever handing them back to the buddy.
-		 */
-		rc = alloc_contig_range_noprof(pfn, pfn + nr_pages, MIGRATE_MOVABLE,
-					       GFP_KERNEL);
-		if (rc == -ENOMEM)
-			/* whoops, out of memory */
-			return rc;
-		else if (rc && !is_movable)
-			break;
-		else if (rc)
-			continue;
-
-		adjust_managed_page_count(pfn_to_page(pfn), -nr_pages);
-
-		/*
-		 * Mark the pages offline and remember that they were
-		 * obtained through alloc_contig_range().
-		 */
-		page_offline_begin();
-		for (; nr_pages--; pfn++) {
-			struct page *page = pfn_to_page(pfn);
-
-			__SetPageOffline(page);
-			if (IS_ALIGNED(pfn, pageblock_nr_pages))
-				SetPageDirty(page);
-		}
-		page_offline_end();
-		return 0;
-	}
-
-	return -EBUSY;
+	/* If the config changed, stop and go back to the main loop. */
+	if (atomic_read(&vm->config_changed))
+		return -EAGAIN;
+	return logically_offline_online_pages(pfn, nr_pages);
 }
 
 /*
@@ -2534,7 +2442,7 @@ static int virtio_mem_init_hotplug(struct virtio_mem *vm)
 				      VIRTIO_MEM_DEFAULT_OFFLINE_THRESHOLD);
 
 	/*
-	 * alloc_contig_range() works reliably with pageblock
+	 * logically_offline_pages() works reliably with pageblock
 	 * granularity on ZONE_NORMAL, use pageblock_nr_pages.
 	 */
 	sb_size = PAGE_SIZE * pageblock_nr_pages;
