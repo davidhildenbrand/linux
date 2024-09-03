@@ -1136,46 +1136,33 @@ static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
 }
 
 /*
- * Set a range of pages PG_offline. Remember pages that were never onlined
- * (via generic_online_page()) using PageDirty().
+ * Set a range of pages PG_offline. Remember that these pages were obtained
+ * through alloc_contig_range().
  */
 static void virtio_mem_set_fake_offline(unsigned long pfn,
-					unsigned long nr_pages, bool onlined)
+		unsigned long nr_pages)
 {
 	page_offline_begin();
 	for (; nr_pages--; pfn++) {
 		struct page *page = pfn_to_page(pfn);
 
-		if (!onlined)
-			/*
-			 * Pages that have not been onlined yet were initialized
-			 * to PageOffline(). Remember that we have to route them
-			 * through generic_online_page().
-			 */
+		__SetPageOffline(page);
+		if (IS_ALIGNED(pfn, pageblock_nr_pages))
 			SetPageDirty(page);
-		else
-			__SetPageOffline(page);
-		VM_WARN_ON_ONCE(!PageOffline(page));
 	}
 	page_offline_end();
 }
 
 /*
- * Clear PG_offline from a range of pages. If the pages were never onlined,
- * (via generic_online_page()), clear PageDirty().
+ * Clear PG_offline from a range of pages that were obtained through
+ * alloc_contig_range(), when we are about to free them with free_contig_range().
  */
 static void virtio_mem_clear_fake_offline(unsigned long pfn,
-					  unsigned long nr_pages, bool onlined)
+		unsigned long nr_pages)
 {
-	for (; nr_pages--; pfn++) {
-		struct page *page = pfn_to_page(pfn);
-
-		if (!onlined)
-			/* generic_online_page() will clear PageOffline(). */
-			ClearPageDirty(page);
-		else
-			__ClearPageOffline(page);
-	}
+	for (; nr_pages--; pfn++)
+		/* No need to clear PageDirty(). */
+		__ClearPageOffline(pfn_to_page(pfn));
 }
 
 /*
@@ -1198,7 +1185,7 @@ static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 			order--;
 
 		/*
-		 * If the page is PageDirty(), it was kept fake-offline when
+		 * If the page is not PageDirty(), it was kept fake-offline when
 		 * onlining the memory block. Otherwise, it was allocated
 		 * using alloc_contig_range(). All pages in a pageblock are
 		 * alike, but we might get called on ranges where individual
@@ -1212,11 +1199,10 @@ static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 			}
 		}
 
-		if (dirty) {
-			virtio_mem_clear_fake_offline(pfn, 1 << order, false);
+		if (!dirty) {
 			generic_online_page(page, order);
 		} else {
-			virtio_mem_clear_fake_offline(pfn, 1 << order, true);
+			virtio_mem_clear_fake_offline(pfn, 1 << order);
 			free_contig_range(pfn, 1 << order);
 			adjust_managed_page_count(page, 1 << order);
 		}
@@ -1235,6 +1221,9 @@ static int virtio_mem_fake_offline(struct virtio_mem *vm, unsigned long pfn,
 {
 	const bool is_movable = is_zone_movable_page(pfn_to_page(pfn));
 	int rc, retry_count;
+
+	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
+		return -EINVAL;
 
 	/*
 	 * TODO: We want an alloc_contig_range() mode that tries to allocate
@@ -1267,7 +1256,7 @@ static int virtio_mem_fake_offline(struct virtio_mem *vm, unsigned long pfn,
 		else if (rc)
 			continue;
 
-		virtio_mem_set_fake_offline(pfn, nr_pages, true);
+		virtio_mem_set_fake_offline(pfn, nr_pages);
 		adjust_managed_page_count(pfn_to_page(pfn), -nr_pages);
 		return 0;
 	}
@@ -1362,9 +1351,6 @@ static void virtio_mem_online_page(struct virtio_mem *vm,
 
 		if (do_online)
 			generic_online_page(pfn_to_page(PFN_DOWN(addr)), order);
-		else
-			virtio_mem_set_fake_offline(PFN_DOWN(addr), 1 << order,
-						    false);
 		addr = next;
 	}
 }
@@ -1384,9 +1370,8 @@ static void virtio_mem_online_page_cb(struct page *page, unsigned int order)
 			continue;
 
 		/*
-		 * virtio_mem_set_fake_offline() might sleep. We can safely
-		 * drop the RCU lock at this point because the device
-		 * cannot go away. See virtio_mem_remove() how races
+		 * We can safely drop the RCU lock at this point because the
+		 * device cannot go away. See virtio_mem_remove() how races
 		 * between memory onlining and device removal are handled.
 		 */
 		rcu_read_unlock();
