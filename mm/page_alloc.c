@@ -6663,7 +6663,6 @@ done:
 	undo_isolate_page_range(start, end, migratetype);
 	return ret;
 }
-EXPORT_SYMBOL(alloc_contig_range_noprof);
 
 static int __alloc_contig_pages(unsigned long start_pfn,
 				unsigned long nr_pages, gfp_t gfp_mask)
@@ -6933,7 +6932,6 @@ void free_contig_range(unsigned long pfn, unsigned long nr_pages)
 	}
 	WARN(count != 0, "%lu pages are still in use!\n", count);
 }
-EXPORT_SYMBOL(free_contig_range);
 
 /*
  * Effectively disable pcplists for the zone by setting the high limit to 0
