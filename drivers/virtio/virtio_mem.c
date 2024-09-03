@@ -94,8 +94,8 @@ enum virtio_mem_bbm_bb_state {
 	VIRTIO_MEM_BBM_BB_PLUGGED,
 	/* Plugged and added to Linux. */
 	VIRTIO_MEM_BBM_BB_ADDED,
-	/* All online parts are fake-offline, ready to remove. */
-	VIRTIO_MEM_BBM_BB_FAKE_OFFLINE,
+	/* All pages in online sections are logically offline, ready to remove. */
+	VIRTIO_MEM_BBM_BB_LOGICALLY_OFFLINE,
 	VIRTIO_MEM_BBM_BB_COUNT
 };
 
@@ -276,10 +276,10 @@ static DEFINE_MUTEX(virtio_mem_mutex);
 static LIST_HEAD(virtio_mem_devices);
 
 static void virtio_mem_online_page_cb(struct page *page, unsigned int order);
-static void virtio_mem_fake_offline_going_offline(unsigned long pfn,
-						  unsigned long nr_pages);
-static void virtio_mem_fake_offline_cancel_offline(unsigned long pfn,
-						   unsigned long nr_pages);
+static void virtio_mem_logically_offline_going_offline(unsigned long pfn,
+		unsigned long nr_pages);
+static void virtio_mem_logically_offline_cancel_offline(unsigned long pfn,
+		unsigned long nr_pages);
 static void virtio_mem_retry(struct virtio_mem *vm);
 static int virtio_mem_create_resource(struct virtio_mem *vm);
 static void virtio_mem_delete_resource(struct virtio_mem *vm);
@@ -757,8 +757,8 @@ static int virtio_mem_offline_and_remove_memory(struct virtio_mem *vm,
 	}
 	dev_dbg(&vm->vdev->dev, "offlining and removing memory failed: %d\n", rc);
 	/*
-	 * We don't really expect this to fail, because we fake-offlined all
-	 * memory already. But it could fail in corner cases.
+	 * We don't really expect this to fail, because we logically offlined
+	 * all memory already. But it could fail in corner cases.
 	 */
 	WARN_ON_ONCE(rc != -ENOMEM && rc != -EBUSY);
 	return rc == -ENOMEM ? -ENOMEM : -EBUSY;
@@ -934,7 +934,7 @@ static void virtio_mem_sbm_notify_going_offline(struct virtio_mem *vm,
 			continue;
 		pfn = PFN_DOWN(virtio_mem_mb_id_to_phys(mb_id) +
 			       sb_id * vm->sbm.sb_size);
-		virtio_mem_fake_offline_going_offline(pfn, nr_pages);
+		virtio_mem_logically_offline_going_offline(pfn, nr_pages);
 	}
 }
 
@@ -950,7 +950,7 @@ static void virtio_mem_sbm_notify_cancel_offline(struct virtio_mem *vm,
 			continue;
 		pfn = PFN_DOWN(virtio_mem_mb_id_to_phys(mb_id) +
 			       sb_id * vm->sbm.sb_size);
-		virtio_mem_fake_offline_cancel_offline(pfn, nr_pages);
+		virtio_mem_logically_offline_cancel_offline(pfn, nr_pages);
 	}
 }
 
@@ -960,13 +960,13 @@ static void virtio_mem_bbm_notify_going_offline(struct virtio_mem *vm,
 						unsigned long nr_pages)
 {
 	/*
-	 * When marked as "fake-offline", all online memory of this device block
-	 * is allocated by us. Otherwise, we don't have any memory allocated.
+	 * When marked as "logically offline", all online memory of this device
+	 * block is logically offline and must be handled.
 	 */
 	if (virtio_mem_bbm_get_bb_state(vm, bb_id) !=
-	    VIRTIO_MEM_BBM_BB_FAKE_OFFLINE)
+	    VIRTIO_MEM_BBM_BB_LOGICALLY_OFFLINE)
 		return;
-	virtio_mem_fake_offline_going_offline(pfn, nr_pages);
+	virtio_mem_logically_offline_going_offline(pfn, nr_pages);
 }
 
 static void virtio_mem_bbm_notify_cancel_offline(struct virtio_mem *vm,
@@ -975,9 +975,9 @@ static void virtio_mem_bbm_notify_cancel_offline(struct virtio_mem *vm,
 						 unsigned long nr_pages)
 {
 	if (virtio_mem_bbm_get_bb_state(vm, bb_id) !=
-	    VIRTIO_MEM_BBM_BB_FAKE_OFFLINE)
+	    VIRTIO_MEM_BBM_BB_LOGICALLY_OFFLINE)
 		return;
-	virtio_mem_fake_offline_cancel_offline(pfn, nr_pages);
+	virtio_mem_logically_offline_cancel_offline(pfn, nr_pages);
 }
 
 /*
@@ -1135,11 +1135,9 @@ static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
 	}
 }
 
-/*
- * Release a range of fake-offline pages to the buddy, effectively
- * fake-onlining them.
- */
-static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
+/* Release a range of logically offline pages to the buddy. */
+static void virtio_mem_online_logically_offline_pages(unsigned long pfn,
+		unsigned long nr_pages)
 {
 	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
 		return;
@@ -1155,8 +1153,8 @@ static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 			order--;
 
 		/*
-		 * If the page is not PageDirty(), it was kept fake-offline when
-		 * onlining the memory block. Otherwise, it was allocated
+		 * If the page is not PageDirty(), it was kept logically offline
+		 * when onlining the memory block. Otherwise, it was allocated
 		 * using alloc_contig_range(). All pages in a pageblock are
 		 * alike, but we might get called on ranges where individual
 		 * pageblocks differ.
@@ -1184,12 +1182,9 @@ static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 	}
 }
 
-/*
- * Try to allocate a range, marking pages fake-offline, effectively
- * fake-offlining them.
- */
-static int virtio_mem_fake_offline(struct virtio_mem *vm, unsigned long pfn,
-				   unsigned long nr_pages)
+/* Try to logically offline pages. */
+static int virtio_mem_logically_offline_online_pages(struct virtio_mem *vm,
+		unsigned long pfn, unsigned long nr_pages)
 {
 	const bool is_movable = is_zone_movable_page(pfn_to_page(pfn));
 	int rc, retry_count;
@@ -1250,11 +1245,11 @@ static int virtio_mem_fake_offline(struct virtio_mem *vm, unsigned long pfn,
 }
 
 /*
- * Handle fake-offline pages when memory is going offline - such that the
+ * Handle logically offline pages when memory is going offline - such that the
  * pages can be skipped by mm-core when offlining.
  */
-static void virtio_mem_fake_offline_going_offline(unsigned long pfn,
-						  unsigned long nr_pages)
+static void virtio_mem_logically_offline_going_offline(unsigned long pfn,
+		unsigned long nr_pages)
 {
 	struct page *page;
 	unsigned long i;
@@ -1263,16 +1258,16 @@ static void virtio_mem_fake_offline_going_offline(unsigned long pfn,
 	for (i = 0; i < nr_pages; i++) {
 		page = pfn_to_page(pfn + i);
 		if (WARN_ON(!page_ref_dec_and_test(page)))
-			dump_page(page, "fake-offline page referenced");
+			dump_page(page, "logically offline page referenced");
 	}
 }
 
 /*
- * Handle fake-offline pages when memory offlining is canceled - to undo
- * what we did in virtio_mem_fake_offline_going_offline().
+ * Handle logically offline pages when memory offlining is canceled - to undo
+ * what we did in virtio_mem_logically_offline_going_offline().
  */
-static void virtio_mem_fake_offline_cancel_offline(unsigned long pfn,
-						   unsigned long nr_pages)
+static void virtio_mem_logically_offline_cancel_offline(unsigned long pfn,
+		unsigned long nr_pages)
 {
 	unsigned long i;
 
@@ -1326,12 +1321,12 @@ static void virtio_mem_online_page(struct virtio_mem *vm,
 			}
 		} else {
 			/*
-			 * If the whole block is marked fake offline, keep
+			 * If the whole block is marked logically offline, keep
 			 * everything that way.
 			 */
 			id = virtio_mem_phys_to_bb_id(vm, addr);
 			do_online = virtio_mem_bbm_get_bb_state(vm, id) !=
-				    VIRTIO_MEM_BBM_BB_FAKE_OFFLINE;
+				    VIRTIO_MEM_BBM_BB_LOGICALLY_OFFLINE;
 		}
 
 		if (do_online)
@@ -1728,11 +1723,11 @@ static int virtio_mem_sbm_plug_any_sb(struct virtio_mem *vm,
 		if (old_state == VIRTIO_MEM_SBM_MB_OFFLINE_PARTIAL)
 			continue;
 
-		/* fake-online the pages if the memory block is online */
+		/* logically online the pages if the memory block is online */
 		pfn = PFN_DOWN(virtio_mem_mb_id_to_phys(mb_id) +
 			       sb_id * vm->sbm.sb_size);
 		nr_pages = PFN_DOWN(count * vm->sbm.sb_size);
-		virtio_mem_fake_online(pfn, nr_pages);
+		virtio_mem_online_logically_offline_pages(pfn, nr_pages);
 	}
 
 	if (virtio_mem_sbm_test_sb_plugged(vm, mb_id, 0, vm->sbm.sbs_per_mb))
@@ -1969,7 +1964,7 @@ static int virtio_mem_sbm_unplug_sb_online(struct virtio_mem *vm,
 	start_pfn = PFN_DOWN(virtio_mem_mb_id_to_phys(mb_id) +
 			     sb_id * vm->sbm.sb_size);
 
-	rc = virtio_mem_fake_offline(vm, start_pfn, nr_pages);
+	rc = virtio_mem_logically_offline_online_pages(vm, start_pfn, nr_pages);
 	if (rc)
 		return rc;
 
@@ -1977,7 +1972,7 @@ static int virtio_mem_sbm_unplug_sb_online(struct virtio_mem *vm,
 	rc = virtio_mem_sbm_unplug_sb(vm, mb_id, sb_id, count);
 	if (rc) {
 		/* Return the memory to the buddy. */
-		virtio_mem_fake_online(start_pfn, nr_pages);
+		virtio_mem_online_logically_offline_pages(start_pfn, nr_pages);
 		return rc;
 	}
 
@@ -2154,20 +2149,20 @@ static int virtio_mem_bbm_offline_remove_and_unplug_bb(struct virtio_mem *vm,
 		return -EINVAL;
 
 	/*
-	 * Start by fake-offlining all memory. Once we marked the device
-	 * block as fake-offline, all newly onlined memory will
-	 * automatically be kept fake-offline. Protect from concurrent
+	 * Start by logically offlining all memory. Once we marked the device
+	 * block as logically offline, all newly onlined memory will
+	 * automatically be kept logically offline. Protect from concurrent
 	 * onlining/offlining until we have a consistent state.
 	 */
 	mutex_lock(&vm->hotplug_mutex);
-	virtio_mem_bbm_set_bb_state(vm, bb_id, VIRTIO_MEM_BBM_BB_FAKE_OFFLINE);
+	virtio_mem_bbm_set_bb_state(vm, bb_id, VIRTIO_MEM_BBM_BB_LOGICALLY_OFFLINE);
 
 	for (pfn = start_pfn; pfn < end_pfn; pfn += PAGES_PER_SECTION) {
 		page = pfn_to_online_page(pfn);
 		if (!page)
 			continue;
 
-		rc = virtio_mem_fake_offline(vm, pfn, PAGES_PER_SECTION);
+		rc = virtio_mem_logically_offline_online_pages(vm, pfn, PAGES_PER_SECTION);
 		if (rc) {
 			end_pfn = pfn;
 			goto rollback;
@@ -2195,7 +2190,7 @@ rollback:
 		page = pfn_to_online_page(pfn);
 		if (!page)
 			continue;
-		virtio_mem_fake_online(pfn, PAGES_PER_SECTION);
+		virtio_mem_online_logically_offline_pages(pfn, PAGES_PER_SECTION);
 	}
 	virtio_mem_bbm_set_bb_state(vm, bb_id, VIRTIO_MEM_BBM_BB_ADDED);
 	mutex_unlock(&vm->hotplug_mutex);
