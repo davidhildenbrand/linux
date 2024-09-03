@@ -6761,6 +6761,155 @@ struct page *alloc_contig_pages_noprof(unsigned long nr_pages, gfp_t gfp_mask,
 	}
 	return NULL;
 }
+
+/**
+ * logically_offline_online_pages: logically offline pages in online memory
+ *				   sections
+ * @pfn: the start PFN specifying the first page to logically offline
+ * @pages: the number of pages to logically offline
+ *
+ * Try to free up the given range, for example, by migrating movable allocations
+ * away, so we can remove the now-free pages from the buddy and logically
+ * offline the pages.
+ *
+ * Once pages are logically offline, they can either be re-onlined using
+ * online_logically_offline_pages(), or fully offlined when implemented by
+ * the caller using the MEM_GOING_OFFLINE+MEM_GOING_OFFLINE memory notifier
+ * approach as documented for PageOffline().
+ *
+ * The caller must make sure that all pages are within the same zone, that
+ * all covered memory sections are online, and that the memory sections
+ * cannot get offlined concurrently.
+ *
+ * The range must cover full pageblocks. This function will fail if the
+ * range already contains logically offline pages.
+ *
+ * Returns: 0 on success, -ENOMEM when out of memory, and -EBUSY if freeing up
+ * the pages to mark them logically offline failed because some pages are
+ * unmovable.
+ */
+int logically_offline_online_pages(unsigned long pfn, unsigned long nr_pages)
+{
+	unsigned long cur_pfn;
+	int rc;
+
+	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
+		return -EINVAL;
+
+	/*
+	 * Use noprof: we're allocating the memory to unplug it, not to
+	 * use it. We might offline and remove these pages without
+	 * ever handing them back to the buddy.
+	 */
+	rc = alloc_contig_range_noprof(pfn, pfn + nr_pages, MIGRATE_MOVABLE,
+				       GFP_KERNEL);
+	if (rc)
+		return rc;
+
+	/*
+	 * Mark the pages offline and remember that they were
+	 * obtained through alloc_contig_range().
+	 */
+	page_offline_begin();
+	for (cur_pfn = pfn; cur_pfn < pfn + nr_pages; cur_pfn++) {
+		struct page *page = pfn_to_page(cur_pfn);
+
+		__SetPageOffline(page);
+		if (IS_ALIGNED(cur_pfn, pageblock_nr_pages))
+			SetPageDirty(page);
+	}
+	page_offline_end();
+	adjust_managed_page_count(pfn_to_page(pfn), -nr_pages);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(logically_offline_online_pages);
+
+/**
+ * online_logically_offline_pages: online logically offline pages in online
+ *				   memory sections
+ * @pfn: the start PFN specifying the first logically offline page to online
+ * @pages: the number of logically offline pages to online
+ *
+ * Online all pages in the range, releasing them to the buddy.
+ *
+ * The pages must be logically offline, either because (a) they were kept
+ * logically offline when the memory section was onlined using the
+ * online_page_callback; or (b) because they were logically offlined using
+ * logically_offline_online_pages(). The range may contain a mixture of
+ * both types (on pageblock granularity, which is implied).
+ *
+ * The caller must make sure that all pages are within the same zone, that
+ * all memory sections are online, and that the memory sections cannot get
+ * offlined concurrently.
+ *
+ * The range must cover full pageblocks.
+ *
+ * Note: there is no requirement regarding the page ranges passed to
+ * this function and the page ranges passed to logically_offline_online_pages().
+ * For example, it is valid to call logically_offline_online_pages() on to
+ * adjacent page ranges and have a single online_logically_offline_pages()
+ * call that spans the whole page range.
+ */
+void online_logically_offline_pages(unsigned long pfn, unsigned long nr_pages)
+{
+	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
+		return;
+
+	while (nr_pages) {
+		struct page *page = pfn_to_page(pfn);
+		unsigned long cur_pfn;
+		bool dirty;
+		int order;
+
+		/*
+		 * The alignment of our PFN defines the maximum order we can
+		 * use. But we are limited by the maximum buddy order and
+		 * the remaining number of pages.
+		 *
+		 * pfn and nr_pages are never 0.
+		 */
+		order = min(__ffs(pfn), MAX_PAGE_ORDER);
+		order = min(order, ilog2(nr_pages));
+
+		/*
+		 * All pages in a pageblock are alike, so avoid scanning all
+		 * pages. But we might get called on ranges where individual
+		 * pageblocks differ.
+		 */
+		dirty = PageDirty(page);
+		for (cur_pfn = pfn + pageblock_nr_pages;
+		     cur_pfn < pfn + (1 << order);
+		     cur_pfn += pageblock_nr_pages)
+			if (dirty != !!PageDirty(pfn_to_page(cur_pfn)))
+				break;
+
+		/* Use the order that actually fits into our detected range. */
+		order = ilog2(cur_pfn - pfn);
+		VM_WARN_ON_ONCE(!IS_ALIGNED(order, pageblock_order));
+
+		/*
+		 * If a pageblock is marked "dirty", it was obtained through
+		 * alloc_contig_range().
+		 */
+		if (!dirty) {
+#ifdef CONFIG_MEMORY_HOTPLUG
+			generic_online_page(page, order);
+#else
+			WARN_ON_ONCE(1);
+#endif
+		} else {
+			adjust_managed_page_count(page, 1 << order);
+			for (cur_pfn = pfn; cur_pfn < pfn + (1 << order); cur_pfn++)
+				/* No need to clear PageDirty(). */
+				__ClearPageOffline(pfn_to_page(cur_pfn));
+			free_contig_range(pfn, 1 << order);
+		}
+
+		pfn += 1 << order;
+		nr_pages -= 1 << order;
+	}
+}
+EXPORT_SYMBOL_GPL(online_logically_offline_pages);
 #endif /* CONFIG_CONTIG_ALLOC */
 
 void free_contig_range(unsigned long pfn, unsigned long nr_pages)

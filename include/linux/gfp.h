@@ -459,6 +459,8 @@ static inline struct folio *folio_alloc_gigantic_noprof(int order, gfp_t gfp,
 
 	return page ? page_folio(page) : NULL;
 }
+int logically_offline_online_pages(unsigned long pfn, unsigned long nr_pages);
+void online_logically_offline_pages(unsigned long pfn, unsigned long nr_pages);
 #else
 static inline struct folio *folio_alloc_gigantic_noprof(int order, gfp_t gfp,
 							int nid, nodemask_t *node)
