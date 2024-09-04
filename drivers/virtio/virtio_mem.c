@@ -1184,34 +1184,45 @@ static void virtio_mem_clear_fake_offline(unsigned long pfn,
  */
 static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 {
-	unsigned long order = MAX_PAGE_ORDER;
-	unsigned long i;
+	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
+		return;
 
-	/*
-	 * We might get called for ranges that don't cover properly aligned
-	 * MAX_PAGE_ORDER pages; however, we can only online properly aligned
-	 * pages with an order of MAX_PAGE_ORDER at maximum.
-	 */
-	while (!IS_ALIGNED(pfn | nr_pages, 1 << order))
-		order--;
+	while (nr_pages) {
+		struct page *page = pfn_to_page(pfn);
+		int order = MAX_PAGE_ORDER;
+		unsigned long i;
+		bool dirty;
 
-	for (i = 0; i < nr_pages; i += 1 << order) {
-		struct page *page = pfn_to_page(pfn + i);
+		/* Try to free in largest granularity possible. */
+		while (!IS_ALIGNED(pfn, 1 << order) || nr_pages < (1 << order))
+			order--;
 
 		/*
 		 * If the page is PageDirty(), it was kept fake-offline when
 		 * onlining the memory block. Otherwise, it was allocated
-		 * using alloc_contig_range(). All pages in a subblock are
-		 * alike.
+		 * using alloc_contig_range(). All pages in a pageblock are
+		 * alike, but we might get called on ranges where individual
+		 * pageblocks differ.
 		 */
-		if (PageDirty(page)) {
-			virtio_mem_clear_fake_offline(pfn + i, 1 << order, false);
+		dirty = PageDirty(page);
+		for (i = pageblock_nr_pages; i < (1 << order); i += pageblock_nr_pages) {
+			if (dirty ^ !!PageDirty(pfn_to_page(pfn + i))) {
+				order = pageblock_order;
+				break;
+			}
+		}
+
+		if (dirty) {
+			virtio_mem_clear_fake_offline(pfn, 1 << order, false);
 			generic_online_page(page, order);
 		} else {
-			virtio_mem_clear_fake_offline(pfn + i, 1 << order, true);
-			free_contig_range(pfn + i, 1 << order);
+			virtio_mem_clear_fake_offline(pfn, 1 << order, true);
+			free_contig_range(pfn, 1 << order);
 			adjust_managed_page_count(page, 1 << order);
 		}
+
+		pfn += 1 << order;
+		nr_pages -= 1 << order;
 	}
 }
 
