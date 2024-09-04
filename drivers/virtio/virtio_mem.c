@@ -1136,24 +1136,6 @@ static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
 }
 
 /*
- * Set a range of pages PG_offline. Remember that these pages were obtained
- * through alloc_contig_range().
- */
-static void virtio_mem_set_fake_offline(unsigned long pfn,
-		unsigned long nr_pages)
-{
-	page_offline_begin();
-	for (; nr_pages--; pfn++) {
-		struct page *page = pfn_to_page(pfn);
-
-		__SetPageOffline(page);
-		if (IS_ALIGNED(pfn, pageblock_nr_pages))
-			SetPageDirty(page);
-	}
-	page_offline_end();
-}
-
-/*
  * Clear PG_offline from a range of pages that were obtained through
  * alloc_contig_range(), when we are about to free them with free_contig_range().
  */
@@ -1256,8 +1238,21 @@ static int virtio_mem_fake_offline(struct virtio_mem *vm, unsigned long pfn,
 		else if (rc)
 			continue;
 
-		virtio_mem_set_fake_offline(pfn, nr_pages);
 		adjust_managed_page_count(pfn_to_page(pfn), -nr_pages);
+
+		/*
+		 * Mark the pages offline and remember that they were
+		 * obtained through alloc_contig_range().
+		 */
+		page_offline_begin();
+		for (; nr_pages--; pfn++) {
+			struct page *page = pfn_to_page(pfn);
+
+			__SetPageOffline(page);
+			if (IS_ALIGNED(pfn, pageblock_nr_pages))
+				SetPageDirty(page);
+		}
+		page_offline_end();
 		return 0;
 	}
 
