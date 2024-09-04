@@ -1136,18 +1136,6 @@ static int virtio_mem_pm_notifier_cb(struct notifier_block *nb,
 }
 
 /*
- * Clear PG_offline from a range of pages that were obtained through
- * alloc_contig_range(), when we are about to free them with free_contig_range().
- */
-static void virtio_mem_clear_fake_offline(unsigned long pfn,
-		unsigned long nr_pages)
-{
-	for (; nr_pages--; pfn++)
-		/* No need to clear PageDirty(). */
-		__ClearPageOffline(pfn_to_page(pfn));
-}
-
-/*
  * Release a range of fake-offline pages to the buddy, effectively
  * fake-onlining them.
  */
@@ -1184,9 +1172,11 @@ static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 		if (!dirty) {
 			generic_online_page(page, order);
 		} else {
-			virtio_mem_clear_fake_offline(pfn, 1 << order);
-			free_contig_range(pfn, 1 << order);
+			for (i = 0; i < (1 << order); i++)
+				/* No need to clear PageDirty(). */
+				__ClearPageOffline(pfn_to_page(pfn + i));
 			adjust_managed_page_count(page, 1 << order);
+			free_contig_range(pfn, 1 << order);
 		}
 
 		pfn += 1 << order;
