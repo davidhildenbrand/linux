@@ -1184,34 +1184,56 @@ static void virtio_mem_clear_fake_offline(unsigned long pfn,
  */
 static void virtio_mem_fake_online(unsigned long pfn, unsigned long nr_pages)
 {
-	unsigned long order = MAX_PAGE_ORDER;
-	unsigned long i;
+	if (WARN_ON_ONCE(!IS_ALIGNED(pfn | nr_pages, pageblock_nr_pages)))
+		return;
 
-	/*
-	 * We might get called for ranges that don't cover properly aligned
-	 * MAX_PAGE_ORDER pages; however, we can only online properly aligned
-	 * pages with an order of MAX_PAGE_ORDER at maximum.
-	 */
-	while (!IS_ALIGNED(pfn | nr_pages, 1 << order))
-		order--;
-
-	for (i = 0; i < nr_pages; i += 1 << order) {
-		struct page *page = pfn_to_page(pfn + i);
+	while (nr_pages) {
+		struct page *page = pfn_to_page(pfn);
+		unsigned long cur_pfn;
+		bool dirty;
+		int order;
 
 		/*
-		 * If the page is PageDirty(), it was kept fake-offline when
-		 * onlining the memory block. Otherwise, it was allocated
-		 * using alloc_contig_range(). All pages in a subblock are
-		 * alike.
+		 * The alignment of our PFN defines the maximum order we can
+		 * use. But we are limited by the maximum buddy order and
+		 * the remaining number of pages.
+		 *
+		 * pfn and nr_pages are never 0.
 		 */
-		if (PageDirty(page)) {
-			virtio_mem_clear_fake_offline(pfn + i, 1 << order, false);
+		order = min(__ffs(pfn), MAX_PAGE_ORDER);
+		order = min(order, ilog2(nr_pages));
+
+		/*
+		 * All pages in a pageblock are alike, so avoid scanning all
+		 * pages. But we might get called on ranges where individual
+		 * pageblocks differ.
+		 */
+		dirty = PageDirty(page);
+		for (cur_pfn = pfn + pageblock_nr_pages;
+		     cur_pfn < pfn + (1 << order);
+		     cur_pfn += pageblock_nr_pages)
+			if (dirty != !!PageDirty(pfn_to_page(cur_pfn)))
+				break;
+
+		/* Use the order that actually fits into our detected range. */
+		order = ilog2(cur_pfn - pfn);
+		VM_WARN_ON_ONCE(!IS_ALIGNED(order, pageblock_order));
+
+		/*
+		 * If a pageblock is marked "dirty", it was not obtained through
+		 * alloc_contig_range().
+		 */
+		if (dirty) {
+			virtio_mem_clear_fake_offline(pfn, 1 << order, false);
 			generic_online_page(page, order);
 		} else {
-			virtio_mem_clear_fake_offline(pfn + i, 1 << order, true);
-			free_contig_range(pfn + i, 1 << order);
+			virtio_mem_clear_fake_offline(pfn, 1 << order, true);
+			free_contig_range(pfn, 1 << order);
 			adjust_managed_page_count(page, 1 << order);
 		}
+
+		pfn += 1 << order;
+		nr_pages -= 1 << order;
 	}
 }
 
