@@ -303,6 +303,13 @@ struct uffdio_zeropage {
 	 * according to the uffdio_register.ioctls.
 	 */
 #define UFFDIO_ZEROPAGE_MODE_WP			((__u64)1<<1)
+	/*
+	 * Don't use the shared zeropage, resulting in successive write
+	 * accesses not having to trigger Copy-on-Write. When this flag is
+	 * not set, the shared zeropage might be used, depending on other
+	 * factors.
+	 */
+#define UFFDIO_ZEROPAGE_MODE_UNSHARED		((__u64)1<<2)
 	__u64 mode;
 
 	/*

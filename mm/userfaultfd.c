@@ -353,7 +353,7 @@ static int mfill_atomic_pte_zeropage(pmd_t *dst_pmd,
 	spinlock_t *ptl;
 	int ret;
 
-	if (mm_forbids_zeropage(dst_vma->vm_mm))
+	if (mm_forbids_zeropage(dst_vma->vm_mm) || (flags & MFILL_ATOMIC_UNSHARED))
 		return mfill_atomic_pte_zeroed_folio(dst_pmd, dst_vma, dst_addr,
 						     flags);
 

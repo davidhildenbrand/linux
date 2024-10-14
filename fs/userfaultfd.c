@@ -1629,10 +1629,12 @@ static int userfaultfd_zeropage(struct userfaultfd_ctx *ctx,
 	if (ret)
 		goto out;
 	ret = -EINVAL;
-	if (uffdio_zeropage.mode & ~(UFFDIO_ZEROPAGE_MODE_DONTWAKE|UFFDIO_ZEROPAGE_MODE_WP))
+	if (uffdio_zeropage.mode & ~(UFFDIO_ZEROPAGE_MODE_DONTWAKE|UFFDIO_ZEROPAGE_MODE_WP|UFFDIO_ZEROPAGE_MODE_UNSHARED))
 		goto out;
 	if (uffdio_zeropage.mode & UFFDIO_ZEROPAGE_MODE_WP)
 		flags |= MFILL_ATOMIC_WP;
+	if (uffdio_zeropage.mode & UFFDIO_ZEROPAGE_MODE_UNSHARED)
+		flags |= MFILL_ATOMIC_UNSHARED;
 	if (mmget_not_zero(ctx->mm)) {
 		ret = mfill_atomic_zeropage(ctx, uffdio_zeropage.range.start,
 					    uffdio_zeropage.range.len, flags);
