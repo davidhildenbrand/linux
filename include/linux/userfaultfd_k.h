@@ -124,8 +124,7 @@ extern ssize_t mfill_atomic_copy(struct userfaultfd_ctx *ctx, unsigned long dst_
 				 unsigned long src_start, unsigned long len,
 				 uffd_flags_t flags);
 extern ssize_t mfill_atomic_zeropage(struct userfaultfd_ctx *ctx,
-				     unsigned long dst_start,
-				     unsigned long len);
+		unsigned long dst_start, unsigned long len, uffd_flags_t flags);
 extern ssize_t mfill_atomic_continue(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 				     unsigned long len, uffd_flags_t flags);
 extern ssize_t mfill_atomic_poison(struct userfaultfd_ctx *ctx, unsigned long start,

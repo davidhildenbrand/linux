@@ -296,6 +296,13 @@ struct uffdio_copy {
 struct uffdio_zeropage {
 	struct uffdio_range range;
 #define UFFDIO_ZEROPAGE_MODE_DONTWAKE		((__u64)1<<0)
+	/*
+	 * UFFDIO_ZEROPAGE_MODE_WP will map the page write protected on
+	 * the fly.  UFFDIO_ZEROPAGE_MODE_WP is available only if the
+	 * write protected ioctl is implemented for the range
+	 * according to the uffdio_register.ioctls.
+	 */
+#define UFFDIO_ZEROPAGE_MODE_WP			((__u64)1<<1)
 	__u64 mode;
 
 	/*

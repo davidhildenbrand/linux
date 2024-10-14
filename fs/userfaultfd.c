@@ -1610,6 +1610,7 @@ static int userfaultfd_zeropage(struct userfaultfd_ctx *ctx,
 	struct uffdio_zeropage uffdio_zeropage;
 	struct uffdio_zeropage __user *user_uffdio_zeropage;
 	struct userfaultfd_wake_range range;
+	uffd_flags_t flags = 0;
 
 	user_uffdio_zeropage = (struct uffdio_zeropage __user *) arg;
 
@@ -1628,12 +1629,13 @@ static int userfaultfd_zeropage(struct userfaultfd_ctx *ctx,
 	if (ret)
 		goto out;
 	ret = -EINVAL;
-	if (uffdio_zeropage.mode & ~UFFDIO_ZEROPAGE_MODE_DONTWAKE)
+	if (uffdio_zeropage.mode & ~(UFFDIO_ZEROPAGE_MODE_DONTWAKE|UFFDIO_ZEROPAGE_MODE_WP))
 		goto out;
-
+	if (uffdio_zeropage.mode & UFFDIO_ZEROPAGE_MODE_WP)
+		flags |= MFILL_ATOMIC_WP;
 	if (mmget_not_zero(ctx->mm)) {
 		ret = mfill_atomic_zeropage(ctx, uffdio_zeropage.range.start,
-					   uffdio_zeropage.range.len);
+					    uffdio_zeropage.range.len, flags);
 		mmput(ctx->mm);
 	} else {
 		return -ESRCH;
