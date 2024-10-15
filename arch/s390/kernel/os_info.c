@@ -148,7 +148,7 @@ static void os_info_old_init(void)
 
 	if (os_info_init)
 		return;
-	if (!oldmem_data.start && !is_ipl_type_dump())
+	if (!s390_dump_available())
 		goto fail;
 	if (copy_oldmem_kernel(&addr, __LC_OS_INFO, sizeof(addr)))
 		goto fail;

@@ -603,7 +603,7 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 	u64 hdr_off;
 
 	/* If we are not in kdump or zfcp/nvme dump mode return */
-	if (!oldmem_data.start && !is_ipl_type_dump())
+	if (!s390_dump_available())
 		return 0;
 	/* If we cannot get HSA size for zfcp/nvme dump return error */
 	if (is_ipl_type_dump() && !sclp.hsa_size)
