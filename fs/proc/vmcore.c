@@ -118,6 +118,40 @@ static bool pfn_is_ram(unsigned long pfn)
 	return ret;
 }
 
+int vmcore_get_device_ram_ranges(struct list_head *list)
+{
+	struct vmcore_cb *cb;
+	LIST_HEAD(tmp_list);
+	int idx, ret = 0;
+
+	idx = srcu_read_lock(&vmcore_cb_srcu);
+	list_for_each_entry_srcu(cb, &vmcore_cb_list, next,
+				 srcu_read_lock_held(&vmcore_cb_srcu)) {
+		if (!cb->get_device_ram_ranges)
+			continue;
+		ret = cb->get_device_ram_ranges(cb, &tmp_list);
+		if (ret)
+			break;
+	}
+	srcu_read_unlock(&vmcore_cb_srcu, idx);
+
+	if (ret)
+		vmcore_free_device_ram_ranges(&tmp_list);
+	else
+		list_splice_tail(&tmp_list, list);
+	return ret;
+}
+
+void vmcore_free_device_ram_ranges(struct list_head *list)
+{
+	struct vmcore_device_ram_range *cur, *tmp;
+
+	list_for_each_entry_safe(cur, tmp, list, next) {
+		list_del(&cur->next);
+		kfree(cur);
+	}
+}
+
 static int open_vmcore(struct inode *inode, struct file *file)
 {
 	spin_lock(&vmcore_cb_lock);

@@ -90,6 +90,29 @@ static inline void vmcore_unusable(void)
 	elfcorehdr_addr = ELFCORE_ADDR_ERR;
 }
 
+struct vmcore_device_ram_range {
+	phys_addr_t start;
+	phys_addr_t end;
+	struct list_head next;
+};
+
+int vmcore_get_device_ram_ranges(struct list_head *list);
+void vmcore_free_device_ram_ranges(struct list_head *list);
+
+static inline int vmcore_add_device_ram_range(struct list_head *list,
+		phys_addr_t start, phys_addr_t end)
+{
+	struct vmcore_device_ram_range *range;
+
+	range = kmalloc(sizeof(*range), GFP_KERNEL);
+	if (!range)
+		return -ENOMEM;
+	range->start = start;
+	range->end = end;
+	list_add_tail(&range->next, list);
+	return 0;
+}
+
 /**
  * struct vmcore_cb - driver callbacks for /proc/vmcore handling
  * @pfn_is_ram: check whether a PFN really is RAM and should be accessed when
@@ -99,6 +122,12 @@ static inline void vmcore_unusable(void)
  *              indicated in the vmcore instead. For example, a ballooned page
  *              contains no data and reading from such a page will cause high
  *              load in the hypervisor.
+ * @get_device_ram_ranges: RAM ranges provided by devices such as virtio-mem
+ *   are not exposed through other means. If the new kernel is responsible for
+ *   creating the elfcore hdr, this interface allows for detecting these ranges
+ *   so they can be included in the dump. Returned RAM ranges might contain
+ *   holes, which pfn_is_ram() can detect when actually dumping these RAM
+ *   ranges.
  * @next: List head to manage registered callbacks internally; initialized by
  *        register_vmcore_cb().
  *
@@ -109,6 +138,8 @@ static inline void vmcore_unusable(void)
  */
 struct vmcore_cb {
 	bool (*pfn_is_ram)(struct vmcore_cb *cb, unsigned long pfn);
+	int (*get_device_ram_ranges)(struct vmcore_cb *cb,
+				     struct list_head *list);
 	struct list_head next;
 };
 extern void register_vmcore_cb(struct vmcore_cb *cb);
