@@ -503,6 +503,19 @@ static int get_mem_chunk_cnt(void)
 	return cnt;
 }
 
+static void fill_pt_load(Elf64_Phdr *phdr, unsigned long old_identity_base,
+		phys_addr_t start, phys_addr_t end)
+{
+	phdr->p_type = PT_LOAD;
+	phdr->p_vaddr = old_identity_base + start;
+	phdr->p_offset = start;
+	phdr->p_paddr = start;
+	phdr->p_filesz = end - start;
+	phdr->p_memsz = end - start;
+	phdr->p_flags = PF_R | PF_W | PF_X;
+	phdr->p_align = PAGE_SIZE;
+}
+
 /*
  * Initialize ELF loads (new kernel)
  */
@@ -515,14 +528,7 @@ static void loads_init(Elf64_Phdr *phdr, bool os_info_has_vm)
 	if (os_info_has_vm)
 		old_identity_base = os_info_old_value(OS_INFO_IDENTITY_BASE);
 	for_each_physmem_range(idx, &oldmem_type, &start, &end) {
-		phdr->p_type = PT_LOAD;
-		phdr->p_vaddr = old_identity_base + start;
-		phdr->p_offset = start;
-		phdr->p_paddr = start;
-		phdr->p_filesz = end - start;
-		phdr->p_memsz = end - start;
-		phdr->p_flags = PF_R | PF_W | PF_X;
-		phdr->p_align = PAGE_SIZE;
+		fill_pt_load(phdr, old_identity_base, start, end);
 		phdr++;
 	}
 }
