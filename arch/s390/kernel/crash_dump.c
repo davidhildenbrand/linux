@@ -493,12 +493,15 @@ static int get_cpu_cnt(void)
 /*
  * Return memory chunk count for ELF header (new kernel)
  */
-static int get_mem_chunk_cnt(void)
+static int get_mem_chunk_cnt(struct list_head *device_ram_ranges)
 {
+	struct vmcore_device_ram_range *cur;
 	int cnt = 0;
 	u64 idx;
 
 	for_each_physmem_range(idx, &oldmem_type, NULL, NULL)
+		cnt++;
+	list_for_each_entry(cur, device_ram_ranges, next)
 		cnt++;
 	return cnt;
 }
@@ -519,9 +522,11 @@ static void fill_pt_load(Elf64_Phdr *phdr, unsigned long old_identity_base,
 /*
  * Initialize ELF loads (new kernel)
  */
-static void loads_init(Elf64_Phdr *phdr, bool os_info_has_vm)
+static void loads_init(Elf64_Phdr *phdr, bool os_info_has_vm,
+		       struct list_head *device_ram_ranges)
 {
 	unsigned long old_identity_base = 0;
+	struct vmcore_device_ram_range *cur;
 	phys_addr_t start, end;
 	u64 idx;
 
@@ -529,6 +534,10 @@ static void loads_init(Elf64_Phdr *phdr, bool os_info_has_vm)
 		old_identity_base = os_info_old_value(OS_INFO_IDENTITY_BASE);
 	for_each_physmem_range(idx, &oldmem_type, &start, &end) {
 		fill_pt_load(phdr, old_identity_base, start, end);
+		phdr++;
+	}
+	list_for_each_entry(cur, device_ram_ranges, next) {
+		fill_pt_load(phdr, old_identity_base, cur->start, cur->end);
 		phdr++;
 	}
 }
@@ -609,10 +618,12 @@ static size_t get_elfcorehdr_size(int phdr_count)
 int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 {
 	Elf64_Phdr *phdr_notes, *phdr_loads, *phdr_text;
-	int mem_chunk_cnt, phdr_text_cnt;
+	int mem_chunk_cnt, phdr_text_cnt, phdr_cnt;
+	LIST_HEAD(device_ram_ranges);
 	size_t alloc_size;
 	void *ptr, *hdr;
 	u64 hdr_off;
+	int rc;
 
 	/* If we are not in kdump or zfcp/nvme dump mode return */
 	if (!s390_dump_available())
@@ -628,10 +639,25 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 		oldmem_type.total_size = oldmem_data.size;
 	}
 
-	mem_chunk_cnt = get_mem_chunk_cnt();
+	rc = vmcore_get_device_ram_ranges(&device_ram_ranges);
+	if (rc)
+		return rc;
+
+	mem_chunk_cnt = get_mem_chunk_cnt(&device_ram_ranges);
 	phdr_text_cnt = os_info_has_vm() ? 1 : 0;
 
-	alloc_size = get_elfcorehdr_size(mem_chunk_cnt + phdr_text_cnt);
+	/*
+	 * See ehdr_init(), we have to fit all PT_LOAD + one PT_NONE into
+	 * into Elf32_Half.
+	 */
+	phdr_cnt = mem_chunk_cnt + phdr_text_cnt;
+	if ((Elf32_Half)(phdr_cnt + 1) != (phdr_cnt + 1)) {
+		vmcore_free_device_ram_ranges(&device_ram_ranges);
+		pr_err("s390 kdump: too many memory chunks");
+		return -ENOSPC;
+	}
+
+	alloc_size = get_elfcorehdr_size(phdr_cnt);
 
 	hdr = kzalloc(alloc_size, GFP_KERNEL);
 
@@ -644,7 +670,7 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 		panic("s390 kdump allocating elfcorehdr failed");
 
 	/* Init elf header */
-	phdr_notes = ehdr_init(hdr, mem_chunk_cnt + phdr_text_cnt);
+	phdr_notes = ehdr_init(hdr, phdr_cnt);
 	/* Init program headers */
 	if (phdr_text_cnt) {
 		phdr_text = phdr_notes + 1;
@@ -660,12 +686,14 @@ int elfcorehdr_alloc(unsigned long long *addr, unsigned long long *size)
 	if (phdr_text_cnt)
 		text_init(phdr_text);
 	/* Init loads */
-	loads_init(phdr_loads, phdr_text_cnt);
+	loads_init(phdr_loads, phdr_text_cnt, &device_ram_ranges);
 	/* Finalize program headers */
 	hdr_off = PTR_DIFF(ptr, hdr);
 	*addr = (unsigned long long) hdr;
 	*size = (unsigned long long) hdr_off;
 	BUG_ON(elfcorehdr_size > alloc_size);
+
+	vmcore_free_device_ram_ranges(&device_ram_ranges);
 	return 0;
 }
 
