@@ -598,7 +598,7 @@ int smp_store_status(int cpu)
  *    This case does not exist for s390 anymore, setup_arch explicitly
  *    deactivates the elfcorehdr= kernel parameter
  */
-static bool dump_available(void)
+bool s390_dump_available(void)
 {
 	return oldmem_data.start || is_ipl_type_dump();
 }
@@ -608,7 +608,7 @@ void __init smp_save_dump_ipl_cpu(void)
 	struct save_area *sa;
 	void *regs;
 
-	if (!dump_available())
+	if (!s390_dump_available())
 		return;
 	sa = save_area_alloc(true);
 	regs = memblock_alloc(512, 8);
@@ -627,7 +627,7 @@ void __init smp_save_dump_secondary_cpus(void)
 	struct save_area *sa;
 	void *page;
 
-	if (!dump_available())
+	if (!s390_dump_available())
 		return;
 	/* Allocate a page as dumping area for the store status sigps */
 	page = memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
