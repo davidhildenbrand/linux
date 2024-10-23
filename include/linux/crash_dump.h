@@ -121,6 +121,20 @@ struct vmcore_mem_node {
 	loff_t offset;
 };
 
+/* Allocate a vmcore memory node and add it to the list. */
+static inline int vmcore_alloc_add_mem_node(struct list_head *list,
+		unsigned long long paddr, unsigned long long size)
+{
+	struct vmcore_mem_node *m = kzalloc(sizeof(*m), GFP_KERNEL);
+
+	if (!m)
+		return -ENOMEM;
+	m->paddr = paddr;
+	m->size = size;
+	list_add_tail(&m->list, list);
+	return 0;
+}
+
 #else /* !CONFIG_CRASH_DUMP */
 static inline bool is_kdump_kernel(void) { return false; }
 #endif /* CONFIG_CRASH_DUMP */
