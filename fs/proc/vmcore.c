@@ -1568,14 +1568,7 @@ void vmcore_cleanup(void)
 		proc_vmcore = NULL;
 	}
 
-	/* clear the vmcore list. */
-	while (!list_empty(&vmcore_list)) {
-		struct vmcore_mem_node *m;
-
-		m = list_first_entry(&vmcore_list, struct vmcore_mem_node, list);
-		list_del(&m->list);
-		kfree(m);
-	}
+	vmcore_free_mem_nodes(&vmcore_list);
 	free_elfcorebuf();
 
 	/* clear vmcore device dump list */

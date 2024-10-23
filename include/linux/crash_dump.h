@@ -135,6 +135,17 @@ static inline int vmcore_alloc_add_mem_node(struct list_head *list,
 	return 0;
 }
 
+/* Free a list of vmcore memory nodes. */
+static inline void vmcore_free_mem_nodes(struct list_head *list)
+{
+	struct vmcore_mem_node *m, *tmp;
+
+	list_for_each_entry_safe(m, tmp, list, list) {
+		list_del(&m->list);
+		kfree(m);
+	}
+}
+
 #else /* !CONFIG_CRASH_DUMP */
 static inline bool is_kdump_kernel(void) { return false; }
 #endif /* CONFIG_CRASH_DUMP */
