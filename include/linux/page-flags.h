@@ -1150,7 +1150,7 @@ PAGEFLAG_FALSE(MovableOpsIsolated, movable_ops_isolated);
 
 /**
  * page_has_movable_ops - test for a movable_ops page
- * @page The page to test.
+ * @page: The page to test.
  *
  * Test whether this is a movable_ops page. Such pages will stay that
  * way until freed.
