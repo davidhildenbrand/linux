@@ -2263,9 +2263,10 @@ void __init init_cma_pageblock(struct page *page)
 }
 #endif
 
-void set_zone_contiguous(struct zone *zone)
+static void calc_online_pages(struct zone *zone)
 {
 	unsigned long block_start_pfn = zone->zone_start_pfn;
+	unsigned long online_pages = 0;
 	unsigned long block_end_pfn;
 
 	block_end_pfn = pageblock_end_pfn(block_start_pfn);
@@ -2277,12 +2278,11 @@ void set_zone_contiguous(struct zone *zone)
 
 		if (!__pageblock_pfn_to_page(block_start_pfn,
 					     block_end_pfn, zone))
-			return;
+			continue;
 		cond_resched();
+		online_pages += block_end_pfn - block_start_pfn;
 	}
-
-	/* We confirm that there is no hole */
-	zone->contiguous = true;
+	zone->online_pages = online_pages;
 }
 
 /*
@@ -2348,7 +2348,7 @@ void __init page_alloc_init_late(void)
 		shuffle_free_memory(NODE_DATA(nid));
 
 	for_each_populated_zone(zone)
-		set_zone_contiguous(zone);
+		calc_online_pages(zone);
 
 	/* Initialize page ext after all struct pages are initialized. */
 	if (deferred_struct_pages)

@@ -1788,6 +1788,7 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   "\n        promo    %lu"
 		   "\n        spanned  %lu"
 		   "\n        present  %lu"
+		   "\n        contig   %d"
 		   "\n        managed  %lu"
 		   "\n        cma      %lu",
 		   zone_page_state(zone, NR_FREE_PAGES),
@@ -1798,6 +1799,7 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   promo_wmark_pages(zone),
 		   zone->spanned_pages,
 		   zone->present_pages,
+		   zone_is_contiguous(zone),
 		   zone_managed_pages(zone),
 		   zone_cma_pages(zone));
 
