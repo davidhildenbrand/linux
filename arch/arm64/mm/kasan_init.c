@@ -216,10 +216,32 @@ asmlinkage void __init kasan_early_init(void)
 		 */
 		static pte_t tbl[PTRS_PER_PTE] __bss_pgtbl;
 		pgd_t *pgdp = pgd_offset_k(KASAN_SHADOW_START);
+		p4d_t *p4dp;
+		pud_t *pudp;
+		pmd_t *pmdp;
 
-		set_pgd(pgdp, __pgd(__pa_symbol(tbl) | PGD_TYPE_TABLE));
+		if (CONFIG_PGTABLE_LEVELS == 5 && pgtable_l5_enabled()) {
+			set_pgd(pgdp, __pgd(__pa_symbol(tbl) | PGD_TYPE_TABLE));
+			goto populate;
+		}
+
+		p4dp = p4d_offset(pgdp, KASAN_SHADOW_START);
+		if (CONFIG_PGTABLE_LEVELS >= 4 && pgtable_l4_enabled()) {
+			set_p4d(p4dp, __p4d(__pa_symbol(tbl) | P4D_TYPE_TABLE));
+			goto populate;
+		}
+
+		pudp = pud_offset(p4dp, KASAN_SHADOW_START);
+		if (CONFIG_PGTABLE_LEVELS >= 3) {
+			set_pud(pudp, __pud(__pa_symbol(tbl) | PUD_TYPE_TABLE));
+			goto populate;
+		}
+
+		pmdp = pmd_offset(pudp, KASAN_SHADOW_START);
+		set_pmd(pmdp, __pmd(__pa_symbol(tbl) | PMD_TYPE_TABLE));
 	}
 
+populate:
 	kasan_pgd_populate(KASAN_SHADOW_START, KASAN_SHADOW_END, NUMA_NO_NODE,
 			   true);
 }
