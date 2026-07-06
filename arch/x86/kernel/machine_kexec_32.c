@@ -84,12 +84,12 @@ static void machine_kexec_page_table_set_one(
 	pud_t *pud;
 
 	pgd += pgd_index(vaddr);
-#ifdef CONFIG_X86_PAE
-	if (!(pgd_val(*pgd) & _PAGE_PRESENT))
-		set_pgd(pgd, __pgd(__pa(pmd) | _PAGE_PRESENT));
-#endif
 	p4d = p4d_offset(pgd, vaddr);
 	pud = pud_offset(p4d, vaddr);
+#ifdef CONFIG_X86_PAE
+	if (!(pud_val(*pud) & _PAGE_PRESENT))
+		set_pud(pud, __pud(__pa(pmd) | _PAGE_PRESENT));
+#endif
 	pmd = pmd_offset(pud, vaddr);
 	if (!(pmd_val(*pmd) & _PAGE_PRESENT))
 		set_pmd(pmd, __pmd(__pa(pte) | _PAGE_TABLE));
