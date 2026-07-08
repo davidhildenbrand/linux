@@ -207,14 +207,17 @@ static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
  */
 static void mop_up_one_pmd(struct mm_struct *mm, pgd_t *pgdp)
 {
-	pgd_t pgd = *pgdp;
+	pud_t *pudp, pud;
 
-	if (pgd_val(pgd) != 0) {
-		pmd_t *pmd = (pmd_t *)pgd_page_vaddr(pgd);
+	pudp = pud_offset(p4d_offset(pgdp, 0), 0);
+	pud = *pudp;
 
-		pgd_clear(pgdp);
+	if (!pud_none(pud)) {
+		pmd_t *pmd = pud_pgtable(pud);
 
-		paravirt_release_pmd(pgd_val(pgd) >> PAGE_SHIFT);
+		pud_clear(pudp);
+
+		paravirt_release_pmd(pud_pfn(pud));
 		pmd_free(mm, pmd);
 		mm_dec_nr_pmds(mm);
 	}
@@ -239,23 +242,24 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgdp)
 #endif
 }
 
-static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
+static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgdp, pmd_t *pmds[])
 {
-	p4d_t *p4d;
-	pud_t *pud;
+	pud_t *pudp, *pudp_s;
 	int i;
 
-	p4d = p4d_offset(pgd, 0);
-	pud = pud_offset(p4d, 0);
+	pudp = pud_offset(p4d_offset(pgdp, 0), 0);
 
-	for (i = 0; i < PREALLOCATED_PMDS; i++, pud++) {
+	for (i = 0; i < PREALLOCATED_PMDS; i++, pudp++) {
 		pmd_t *pmd = pmds[i];
 
-		if (i >= KERNEL_PGD_BOUNDARY)
-			memcpy(pmd, (pmd_t *)pgd_page_vaddr(swapper_pg_dir[i]),
-			       sizeof(pmd_t) * PTRS_PER_PMD);
+		if (i >= KERNEL_PGD_BOUNDARY) {
+			pudp_s = pud_offset(p4d_offset(&swapper_pg_dir[i], 0), 0);
 
-		pud_populate(mm, pud, pmd);
+			memcpy(pmd, (pmd_t *)pud_pgtable(*pudp_s),
+			       sizeof(pmd_t) * PTRS_PER_PMD);
+		}
+
+		pud_populate(mm, pudp, pmd);
 	}
 }
 
@@ -265,8 +269,8 @@ static void pgd_prepopulate_user_pmd(struct mm_struct *mm,
 {
 	pgd_t *s_pgd = kernel_to_user_pgdp(swapper_pg_dir);
 	pgd_t *u_pgd = kernel_to_user_pgdp(k_pgd);
-	p4d_t *u_p4d;
-	pud_t *u_pud;
+	p4d_t *s_p4d, *u_p4d;
+	pud_t *s_pud, *u_pud;
 	int i;
 
 	u_p4d = p4d_offset(u_pgd, 0);
@@ -278,7 +282,10 @@ static void pgd_prepopulate_user_pmd(struct mm_struct *mm,
 	for (i = 0; i < PREALLOCATED_USER_PMDS; i++, u_pud++, s_pgd++) {
 		pmd_t *pmd = pmds[i];
 
-		memcpy(pmd, (pmd_t *)pgd_page_vaddr(*s_pgd),
+		s_p4d = p4d_offset(s_pgd, 0);
+		s_pud = pud_offset(s_p4d, 0);
+
+		memcpy(pmd, (pmd_t *)pud_pgtable(*s_pud),
 		       sizeof(pmd_t) * PTRS_PER_PMD);
 
 		pud_populate(mm, u_pud, pmd);
