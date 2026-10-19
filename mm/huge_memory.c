@@ -2495,6 +2495,14 @@ static void zap_huge_pmd_folio(struct mm_struct *mm, struct vm_area_struct *vma,
 {
 	const bool is_device_private = folio_is_device_private(folio);
 
+	/* Transfer young+dirty while the folio is still mapped. */
+	if (is_present && !folio_test_anon(folio)) {
+		if (pmd_dirty(pmdval))
+			folio_mark_dirty(folio);
+		if (pmd_young(pmdval) && likely(vma_has_recency(vma)))
+			folio_mark_accessed(folio);
+	}
+
 	/* Present and device private folios are rmappable. */
 	if (is_present || is_device_private)
 		folio_remove_rmap_pmd(folio, &folio->page, vma);
@@ -2504,12 +2512,6 @@ static void zap_huge_pmd_folio(struct mm_struct *mm, struct vm_area_struct *vma,
 	} else {
 		add_mm_counter(mm, mm_counter_file(folio),
 			       -HPAGE_PMD_NR);
-
-		if (is_present && pmd_dirty(pmdval))
-			folio_mark_dirty(folio);
-		if (is_present && pmd_young(pmdval) &&
-		    likely(vma_has_recency(vma)))
-			folio_mark_accessed(folio);
 	}
 
 	/* Device private folios are pinned. */
