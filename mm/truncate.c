@@ -499,7 +499,15 @@ void truncate_inode_pages_range(struct address_space *mapping,
 			folio_lock(folio);
 			VM_BUG_ON_FOLIO(!folio_contains(folio, indices[i]), folio);
 			folio_wait_writeback(folio);
-			truncate_inode_folio(mapping, folio);
+			if (truncate_inode_folio(mapping, folio)) {
+				folio_unlock(folio);
+				/*
+				 * Folio might have been replaced: look it up
+				 * again.
+				 */
+				index = indices[i];
+				break;
+			}
 			folio_unlock(folio);
 		}
 		truncate_folio_batch_exceptionals(mapping, &fbatch, indices);
@@ -760,7 +768,12 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 			folio_lock(folio);
 			if (unlikely(folio->mapping != mapping)) {
 				folio_unlock(folio);
-				continue;
+				/*
+				 * Folio might have been replaced: look up
+				 * again.
+				 */
+				index = indices[i];
+				break;
 			}
 			VM_BUG_ON_FOLIO(!folio_contains(folio, indices[i]), folio);
 			folio_wait_writeback(folio);
