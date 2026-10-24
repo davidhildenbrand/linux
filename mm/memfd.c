@@ -211,12 +211,14 @@ static int memfd_wait_for_pins(struct address_space *mapping)
 
 static unsigned int *memfd_file_seals_ptr(struct file *file)
 {
-	if (shmem_file(file))
-		return &SHMEM_I(file_inode(file))->seals;
+	struct inode *inode = file_inode(file);
+
+	if (file_inode_is_shmem(inode))
+		return &SHMEM_I(inode)->seals;
 
 #ifdef CONFIG_HUGETLBFS
 	if (is_file_hugepages(file))
-		return &HUGETLBFS_I(file_inode(file))->seals;
+		return &HUGETLBFS_I(inode)->seals;
 #endif
 
 	return NULL;
