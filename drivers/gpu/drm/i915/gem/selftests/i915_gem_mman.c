@@ -1460,7 +1460,8 @@ static int __igt_mmap_access(struct drm_i915_private *i915,
 	if (err)
 		return err;
 
-	addr = igt_mmap_offset(i915, offset, obj->base.size, PROT_WRITE, MAP_SHARED);
+	addr = igt_mmap_offset(i915, offset, obj->base.size,
+			       PROT_READ | PROT_WRITE, MAP_SHARED);
 	if (IS_ERR_VALUE(addr))
 		return addr;
 	ptr = (unsigned long __user *)addr;
